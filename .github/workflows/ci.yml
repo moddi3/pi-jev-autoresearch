@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches-ignore: [main]
+    branches: [main]
 
 permissions:
   contents: read
@@ -30,4 +30,6 @@ jobs:
       - run: pnpm --dir site install --frozen-lockfile --ignore-scripts
       - run: pnpm --dir site build
       - run: test -f site/build/index.html -a -f site/build/configuration.html -a -f site/build/recordings/casts.js
-      - run: test -z "$(git ls-files site/build docs)"
+      # Generated site output must stay untracked. docs/ holds authored source
+      # (e.g. docs/upstream-baseline.json), so only site/build is asserted empty.
+      - run: test -z "$(git ls-files site/build)"

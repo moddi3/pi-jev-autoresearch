@@ -1,8 +1,9 @@
 <div align="center">
 <img  height="120" alt="result" src="https://github.com/user-attachments/assets/c66cbd02-4491-4833-a63a-142cfd7530c1" />
 
-# pi-autoresearch
-### Autonomous experiment loop for pi
+# pi-jev-autoresearch
+### Autonomous experiment loop for pi (Jev fork)
+> Fork of [`davebcn87/pi-autoresearch`](https://github.com/davebcn87/pi-autoresearch) with opt-in Jev-directed experiment selection. Upstream copyright and MIT license attribution preserved — see [LICENSE](LICENSE).
 **[Website](https://davebcn87.github.io/pi-autoresearch/)** · **[Documentation](https://davebcn87.github.io/pi-autoresearch/configuration.html)** · **[Install](#install)** · **[Usage](#usage)** · **[How it works](#how-it-works)**
 
 </div>
@@ -19,20 +20,64 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch). W
 
 ---
 
-## Quick start
+## Quick start (this fork)
+
+Install this fork — never the upstream `npm:pi-autoresearch` package alongside it
+(they share extension commands/tools, so loading both at once is unsupported):
 
 ```bash
-pi install npm:pi-autoresearch
+# Revision-pinned fork install (replace the SHA with a reviewed revision):
+pi install git:github.com/moddi3/pi-jev-autoresearch#44d2e1cf5aa85d180737abd65a84595ed857a99d
 pi
 ```
 
-Or load the package for one session only with `pi -e npm:pi-autoresearch`.
+Or load a local checkout for one session only:
+
+```bash
+pi -e ./extensions/pi-autoresearch
+```
 
 Then start the loop inside pi:
 
 ```text
 /autoresearch optimize unit test runtime, monitor correctness
 ```
+
+### Fork setup: dependencies, API key, Jev opt-in, smoke
+
+1. **Dependencies** (Node `>=22`, pnpm `10.28.2` — see `packageManager` in `package.json`):
+   ```bash
+   pnpm install --frozen-lockfile
+   ```
+2. **API key** — export `TYPESAFE_API_KEY` in the process environment (or your
+   supported secret mechanism). Never put the key in config, prompts, logs, or Git:
+   ```bash
+   export TYPESAFE_API_KEY="<key>"
+   ```
+3. **Jev opt-in** — normal autoresearch works with no extra config. To enable
+   Jev-directed selection, add one section to `.auto/config.json` (see
+   [`docs/jev-controller.md`](docs/jev-controller.md) and the
+   `Jev-directed selection (opt-in)` section of `skills/autoresearch-create/SKILL.md`):
+   ```json
+   {
+     "controller": { "mode": "jev" }
+   }
+   ```
+4. **Five-experiment smoke** — establish the objective/benchmark/baseline as usual
+   (the baseline is exempt from selection), then run five post-baseline attempts
+   through propose → select → implement → `run_experiment` → `log_experiment`,
+   interrupting/resuming once. Success means the protocol functions end to end —
+   not that Jev beats the baseline (per `AGENT_HANDOFF.md` §10).
+
+> **Do not load upstream and this fork simultaneously** — both register the same
+> extension commands (`/autoresearch`) and tools (`init_experiment`,
+> `run_experiment`, `log_experiment`, plus `select_experiment` in Jev mode), so
+> one will shadow or conflict with the other. Keep the implementation checkout
+> separate from the target repository it optimizes.
+>
+> **Synthetic eval reports are not live comparisons.** Checked-in fixtures such as
+> `evals/paired-pilot/report.mock.json` and `evals/live-smoke/transcript.mock.json`
+> exercise the harness only; no "Jev is better/faster" claim is made here.
 
 ## What's included
 
@@ -147,19 +192,26 @@ All session files live in a single `.auto/` subfolder at the working-directory r
 
 ---
 
-## Install
+## Install (this fork)
 
 ```bash
-pi install npm:pi-autoresearch
+# Revision-pinned fork install (replace the SHA with a reviewed revision):
+pi install git:github.com/moddi3/pi-jev-autoresearch#44d2e1cf5aa85d180737abd65a84595ed857a99d
 ```
 
+This fork is not published to the npm registry (`package.json` is `private` and
+named `pi-jev-autoresearch`), so install from a pinned Git revision or load a
+local checkout — never `npm:pi-autoresearch` (upstream).
+
 <details>
-<summary>Manual install</summary>
+<summary>Manual install (local extension load)</summary>
 
 ```bash
 cp -r extensions/pi-autoresearch ~/.pi/agent/extensions/
 cp -r skills/autoresearch-create ~/.pi/agent/skills/
 ```
+
+Or point pi at the checkout for one session: `pi -e ./extensions/pi-autoresearch`.
 
 Then `/reload` in pi.
 
@@ -376,7 +428,7 @@ Pi packages run with your full user permissions. Review this repository before i
 
 Autoresearch intentionally edits files, creates and reverts commits, and executes the commands in `.auto/measure.sh`, `.auto/checks.sh`, and `.auto/hooks/`. Treat those files as executable code: review them before each session, keep credentials and sensitive files out of scope, and use a sandbox or restricted environment for untrusted projects.
 
-For reproducible installs, pin a version you have reviewed, for example `pi install npm:pi-autoresearch@1.7.0`. Published npm releases include provenance attestations.
+For reproducible installs, pin a fork revision you have reviewed, for example `pi install git:github.com/moddi3/pi-jev-autoresearch#44d2e1cf5aa85d180737abd65a84595ed857a99d`.
 
 ## Controlling costs
 
