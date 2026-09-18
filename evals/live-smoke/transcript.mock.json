@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "ticket": "12-live-smoke",
+  "objective": "dedupe-and-sort",
+  "transport": "mock",
+  "model": "jev-1.13.0",
+  "forkSha": "aef9ba3f727b86143928c9ed1494597df4f44d70",
+  "upstreamSha": "939ede8220daad440eac6bb7b6e315cc283e0a64",
+  "startedAt": "2026-09-18T15:07:52.374Z",
+  "finishedAt": "2026-09-18T15:07:53.788Z",
+  "live": {
+    "status": "BLOCKED",
+    "reason": "TYPESAFE_API_KEY is absent: live validation is BLOCKED; mock-backed path only"
+  },
+  "benchmark": {
+    "kind": "synthetic-marker",
+    "script": ".auto/measure.sh",
+    "honestNote": "The fixture benchmark is keyed on implementation markers (FAST -> 50, anything else -> 100), NOT on wall-clock timing. It is deterministic by design so the smoke test proves protocol function (selection, linkage, recovery), never a performance claim. No timing result from this fixture may be reported as a measured improvement."
+  },
+  "baseline": {
+    "metric": 100,
+    "upstreamRun": 1
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "decisionId": "dec-468e987e-9e65-4a99-9589-359d1e9ec8ae",
+      "selectedId": "a1-set-dedupe",
+      "upstreamRun": 2,
+      "outcomeLink": "dec-468e987e-9e65-4a99-9589-359d1e9ec8ae",
+      "status": "keep",
+      "metric": 50,
+      "patchHash": "f7e12b0632aaeab6bba79025182fab63d2142a84a0bd6d864394d8c2c4f4d998",
+      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "probabilities": {
+        "a1-remeasure": 0.15,
+        "a1-set-dedupe": 0.7,
+        "request_new_candidates": 0.15
+      },
+      "confidence": 0.72,
+      "requestedModel": "jev-1.13.0",
+      "responseModel": "jev-1.13.0",
+      "usage": {
+        "inputTokens": 137,
+        "outputTokens": 13
+      },
+      "latencyMs": 52,
+      "selectorMs": 26,
+      "replayed": true,
+      "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
+    },
+    {
+      "attempt": 2,
+      "decisionId": "dec-853f0d9f-e3d2-4be1-a99c-4f7a95b5c4c3",
+      "selectedId": "a2-remeasure",
+      "upstreamRun": 3,
+      "outcomeLink": "dec-853f0d9f-e3d2-4be1-a99c-4f7a95b5c4c3",
+      "status": "discard",
+      "metric": 50,
+      "patchHash": "2b716ff4bfe78fb8471c1efc0e4680ad56700ec05b20495e190ec76fe80061f6",
+      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "probabilities": {
+        "a2-filter-dedupe": 0.15,
+        "a2-remeasure": 0.7,
+        "request_new_candidates": 0.15
+      },
+      "confidence": 0.72,
+      "requestedModel": "jev-1.13.0",
+      "responseModel": "jev-1.13.0",
+      "usage": {
+        "inputTokens": 154,
+        "outputTokens": 14
+      },
+      "latencyMs": 39,
+      "selectorMs": 19,
+      "replayed": true,
+      "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
+    },
+    {
+      "attempt": 3,
+      "decisionId": "dec-b7433b08-9756-438b-bb4b-66e1383ea5f7",
+      "selectedId": "a3-map-dedupe",
+      "upstreamRun": 4,
+      "outcomeLink": "dec-b7433b08-9756-438b-bb4b-66e1383ea5f7",
+      "status": "discard",
+      "metric": 50,
+      "patchHash": "083ee2bf4e134826433b19f074ac81503813c8cd3d5717bb5a6e98d824586904",
+      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "probabilities": {
+        "a3-map-dedupe": 0.7,
+        "a3-remeasure": 0.15,
+        "request_new_candidates": 0.15
+      },
+      "confidence": 0.72,
+      "requestedModel": "jev-1.13.0",
+      "responseModel": "jev-1.13.0",
+      "usage": {
+        "inputTokens": 171,
+        "outputTokens": 15
+      },
+      "latencyMs": 37,
+      "selectorMs": 19,
+      "replayed": true,
+      "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
+    },
+    {
+      "attempt": 4,
+      "decisionId": "dec-c6e5a249-dcf1-466e-a1ab-f37807b6d984",
+      "selectedId": "a4-slow-variant",
+      "upstreamRun": 5,
+      "outcomeLink": "dec-c6e5a249-dcf1-466e-a1ab-f37807b6d984",
+      "status": "discard",
+      "metric": 100,
+      "patchHash": "3ab492cc8756161b357a827ed7bd1cb4bbc3202010fa823bd43e5ff85f34e76f",
+      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "probabilities": {
+        "a4-remeasure": 0.15,
+        "a4-slow-variant": 0.7,
+        "request_new_candidates": 0.15
+      },
+      "confidence": 0.72,
+      "requestedModel": "jev-1.13.0",
+      "responseModel": "jev-1.13.0",
+      "usage": {
+        "inputTokens": 188,
+        "outputTokens": 16
+      },
+      "latencyMs": 38,
+      "selectorMs": 19,
+      "replayed": true,
+      "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
+    },
+    {
+      "attempt": 5,
+      "decisionId": "dec-1bd7f87e-2b4a-444b-b6af-968536632704",
+      "selectedId": "a5-sort-first",
+      "upstreamRun": 6,
+      "outcomeLink": "dec-1bd7f87e-2b4a-444b-b6af-968536632704",
+      "status": "discard",
+      "metric": 50,
+      "patchHash": "a7fea7f9a1d3bf51d25573c243e5d57639209ba145382b69f8b02f5dd3c8a161",
+      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "probabilities": {
+        "a5-remeasure": 0.15,
+        "a5-sort-first": 0.7,
+        "request_new_candidates": 0.15
+      },
+      "confidence": 0.72,
+      "requestedModel": "jev-1.13.0",
+      "responseModel": "jev-1.13.0",
+      "usage": {
+        "inputTokens": 205,
+        "outputTokens": 17
+      },
+      "latencyMs": 38,
+      "selectorMs": 19,
+      "replayed": true,
+      "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
+    }
+  ],
+  "interruptResume": {
+    "attempt": 3,
+    "interruptedAfter": "selection",
+    "recoveredState": "selected",
+    "recoveredDecisionId": "dec-b7433b08-9756-438b-bb4b-66e1383ea5f7",
+    "pendingPreserved": true
+  },
+  "bestKept": {
+    "metric": 50
+  },
+  "finalValidation": {
+    "status": "VALID",
+    "casesChecked": 6,
+    "detail": "golden cases pass in a fresh process"
+  },
+  "workdir": "(cleaned up; rerun with --keep to inspect)",
+  "mockVsLive": "All Jev responses in this transcript are mock-backed fixtures served by a fail-closed stub; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY, not passed.",
+  "limitations": [
+    "The fixture benchmark is synthetic and marker-keyed; its numbers prove protocol function, not performance gains.",
+    "Scripted fixtures stand in for an LLM proposer; selector quality is not evaluated here (see tickets 13-16).",
+    "One interrupt+resume point (after selection, attempt 3); restart-after-benchmark and restart-after-log are covered by ticket 11."
+  ],
+  "nextCommand": "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/live-smoke/run.mjs --mode=live --out evals/live-smoke/transcript.live.json"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "dedupe-and-sort",
+  "objective": "Optimize a pure TypeScript transformation (dedupeAndSort) while its fixed input/output behavior stays byte-identical.",
+  "metricName": "runtime_ms",
+  "metricUnit": "ms",
+  "direction": "lower",
+  "postBaselineAttempts": 5,
+  "targetFile": "src/transform.ts",
+  "benchmark": {
+    "kind": "synthetic-marker",
+    "script": ".auto/measure.sh",
+    "honestNote": "The fixture benchmark is keyed on implementation markers (FAST -> 50, anything else -> 100), NOT on wall-clock timing. It is deterministic by design so the smoke test proves protocol function (selection, linkage, recovery), never a performance claim. No timing result from this fixture may be reported as a measured improvement."
+  },
+  "correctness": {
+    "script": ".auto/checks.sh",
+    "note": "Fixed input/output golden checks. Every variant in fixture/ passes them; speed differs, behavior must not."
+  },
+  "goldenCases": [
+    { "input": [3, 1, 2, 3, 2, 1], "expected": [1, 2, 3] },
+    { "input": [], "expected": [] },
+    { "input": [5, 5, 5], "expected": [5] },
+    { "input": [-1, 3, -1, 0, 2], "expected": [-1, 0, 2, 3] },
+    { "input": [1, 2, 3], "expected": [1, 2, 3] },
+    { "input": [10, -10, 0, 10], "expected": [-10, 0, 10] }
+  ]
+}
