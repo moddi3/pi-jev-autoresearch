@@ -6,6 +6,8 @@
  *                                   |  |          |             |
  *                                   +--+-> cancelled           +-> (pause)
  * selecting -> paused (provider failure)                        awaiting_log -> paused
+ * selected --request_new_candidates--> needs_selection (new proposal round,
+ *   journaled `new_proposals` event; history preserved, snapshot cleared)
  * completed/cancelled --acknowledge--> needs_selection
  * paused --resume--> needs_selection
  * needs_selection --begin_baseline--> baseline --baseline_completed/failed--> needs_selection
@@ -66,6 +68,7 @@ export type LifecycleTrigger =
   | "pause"
   | "acknowledge"
   | "resume"
+  | "new_proposals"
   | "begin_baseline"
   | "baseline_completed"
   | "baseline_failed";
@@ -92,7 +95,7 @@ export const TRANSITION_TABLE: Record<LifecycleState, Partial<Record<LifecycleTr
     cancel: "cancelled",
     pause: "paused",
   },
-  selected: { begin_run: "running", cancel: "cancelled", pause: "paused" },
+  selected: { begin_run: "running", cancel: "cancelled", pause: "paused", new_proposals: "needs_selection" },
   running: { benchmark_recorded: "awaiting_log", cancel: "cancelled", pause: "paused" },
   awaiting_log: { log_recorded: "completed", pause: "paused" },
   completed: { acknowledge: "needs_selection" },
@@ -411,6 +414,36 @@ export class ControllerLifecycle {
   acknowledge(): void {
     const from = this.currentState;
     this.currentState = nextLifecycleState(from, "acknowledge");
+  }
+
+  /**
+   * selected -> needs_selection after Jev returns `request_new_candidates`
+   * with proposal rounds remaining. The superseded decision stays journaled
+   * (history preserved) but carries no pending work: a `new_proposals` event
+   * marks it superseded and the snapshot is cleared, so recovery never
+   * resurrects it. The caller threads `consecutiveUnsuccessfulAfter` into the
+   * next round; the gate pauses once `maxProposalRounds` is spent.
+   */
+  requestNewProposals(decisionId: string, reason: string): void {
+    const from = this.currentState;
+    if (from !== "selected") throw new LifecycleTransitionError(from, "new_proposals");
+    if (!this.pending || this.pending.decisionId !== decisionId) {
+      throw new ControllerStoreError(
+        "validation",
+        `no selected decision ${JSON.stringify(decisionId)} to supersede (pending: ${this.pending?.decisionId ?? "none"})`,
+      );
+    }
+    appendControllerEvent(this.workDir, {
+      v: 1,
+      kind: "new_proposals",
+      decisionId,
+      segment: this.pending.segment,
+      epoch: this.pending.epoch,
+      reason: requireReason(reason),
+    });
+    clearPendingSnapshot(this.workDir);
+    this.pending = undefined;
+    this.currentState = "needs_selection";
   }
 
   /** Explicit baseline path: exempt from selection, holds no pending decision. */

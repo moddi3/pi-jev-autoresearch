@@ -640,6 +640,7 @@ export type ControllerEvent =
   | { v: 1; kind: "benchmark_completed"; eventId: string; at: string; decisionId: string; patchHash: string }
   | { v: 1; kind: "decision_cancelled"; eventId: string; at: string; decisionId: string; segment: number; epoch: number; reason: string; newEvidenceRefs: string[] }
   | { v: 1; kind: "decision_discarded"; eventId: string; at: string; decisionId: string; reason: string }
+  | { v: 1; kind: "new_proposals"; eventId: string; at: string; decisionId: string; segment: number; epoch: number; reason: string }
   | { v: 1; kind: "controller_paused"; eventId: string; at: string; reason: string; decisionId?: string }
   | { v: 1; kind: "policy_frozen"; eventId: string; at: string; policyHash: string; version: number; epoch: number; segment: number }
   | { v: 1; kind: "pending_invalidated"; eventId: string; at: string; decisionId?: string; reason: string };
@@ -656,6 +657,7 @@ const EVENT_KINDS = new Set([
   "benchmark_completed",
   "decision_cancelled",
   "decision_discarded",
+  "new_proposals",
   "controller_paused",
   "policy_frozen",
   "pending_invalidated",
@@ -1183,6 +1185,8 @@ interface DecisionTrail {
   outcome?: boolean;
   cancelled?: { reason: string; segment: number; epoch: number };
   discarded?: string;
+  /** `request_new_candidates` superseded for a new proposal round (no pending work). */
+  newProposals?: { reason: string; segment: number; epoch: number };
   order: number;
 }
 
@@ -1222,6 +1226,13 @@ function foldJournal(events: ControllerEvent[]): { trails: Map<string, DecisionT
       case "decision_discarded":
         trailFor(event.decisionId).discarded = event.reason;
         break;
+      case "new_proposals":
+        trailFor(event.decisionId).newProposals = {
+          reason: event.reason,
+          segment: event.segment,
+          epoch: event.epoch,
+        };
+        break;
       case "controller_paused":
       case "policy_frozen":
       case "pending_invalidated":
@@ -1234,6 +1245,7 @@ function foldJournal(events: ControllerEvent[]): { trails: Map<string, DecisionT
 function journalStateFor(trail: DecisionTrail | undefined): LifecycleState | undefined {
   if (!trail?.decision) return undefined;
   if (trail.discarded) return "needs_selection";
+  if (trail.newProposals && !trail.outcome && !trail.cancelled) return "needs_selection";
   if (trail.outcome) return "completed";
   if (trail.cancelled) return "cancelled";
   if (trail.benchmarkCompleted) return "awaiting_log";
@@ -1330,6 +1342,14 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
       notes.push(`decision ${decisionId} was voided (${trail.discarded}); not usable`);
       break;
     }
+    if (trail.newProposals && !trail.outcome && !trail.cancelled) {
+      // A decision superseded for a new proposal round carries no usable
+      // state either; the next round starts from needs_selection.
+      journalDecisionId = undefined;
+      journalState = "needs_selection";
+      notes.push(`decision ${decisionId} was superseded for a new proposal round (${trail.newProposals.reason}); not usable`);
+      break;
+    }
     journalDecisionId = decisionId;
     const derived = journalStateFor(trail);
     journalState = derived ?? "needs_selection";
@@ -1373,7 +1393,8 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
       event.kind === "benchmark_completed" ||
       event.kind === "outcome" ||
       event.kind === "decision_cancelled" ||
-      event.kind === "decision_discarded"
+      event.kind === "decision_discarded" ||
+      event.kind === "new_proposals"
     ) {
       break;
     }
