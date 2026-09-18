@@ -4,7 +4,29 @@
 
 **Blocked by:** 02 (Controller contracts and opt-in config with off-mode parity).
 
-**Status:** ready-for-agent
+**Status:** done
+
+## Comments
+
+- Claimed and implemented canonical `DecisionState` construction in
+  `extensions/pi-autoresearch/controller/state.ts` (`buildDecisionState`).
+- All arithmetic in code: direction-aware improvement (absolute + relative,
+  null relative on zero baseline), attempt counts, elapsed time, budget
+  remaining, repeat identity (`directionId` + sorted files key with prior
+  runs), metric direction echo. No `Date.now()` inside the build; caller
+  passes explicit `nowMs` for determinism.
+- Evidence dereferenced with `tool-observed` vs `llm-interpretation`
+  provenance preserved; interpretation never merged into `measured`. Unknown
+  refs throw `StateConstructionError` naming the ref.
+- Bounded projection: pinned baseline/best/failure runs in recent history,
+  related attempts, profile excerpts, capped LLM context; `missing` markers +
+  `omissions` record in `derivedSignals` (no `types.ts` change needed).
+- Oversize: deterministic prune stages (profiles → related → iterative
+  excerpt shrink → context), then `StatePayloadTooLargeError`. JSON never
+  truncated. Non-finite metrics excluded from baseline/best with
+  `non-finite-metric` omissions and `metricStatus: "missing"` entries.
+- Tests: `tests/controller-state.test.mjs`, 14 tests green. Full suite
+  103 pass / 0 fail.
 
 **Plan source:** AGENT_HANDOFF.md §6.3.
 
