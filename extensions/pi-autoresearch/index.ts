@@ -50,6 +50,7 @@ import {
 import {
   autoresearchSummaryPathsFor,
   buildAutoresearchCompactionSummary,
+  controllerClearTargets,
 } from "./compaction.ts";
 import { resolveAutoresearchShortcuts, SHORTCUT_ACTIONS } from "./shortcuts.ts";
 import { sessionFilePath, sessionFileCandidates, ensureParentDir, AUTO_DIR } from "./paths.ts";
@@ -3677,6 +3678,20 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
           } catch (error) {
             ctx.ui.notify(
               `Failed to delete ${path.relative(workDir, jsonlPath) || path.basename(jsonlPath)}: ${error instanceof Error ? error.message : String(error)}`,
+              "error"
+            );
+            return;
+          }
+        }
+
+        for (const target of controllerClearTargets(workDir)) {
+          if (!fs.existsSync(target)) continue;
+          try {
+            fs.rmSync(target, { recursive: true, force: true });
+            deletedPaths.push(path.relative(workDir, target) || path.basename(target));
+          } catch (error) {
+            ctx.ui.notify(
+              `Failed to delete ${path.relative(workDir, target) || path.basename(target)}: ${error instanceof Error ? error.message : String(error)}`,
               "error"
             );
             return;

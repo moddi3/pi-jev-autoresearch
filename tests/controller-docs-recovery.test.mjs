@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -268,4 +269,16 @@ test("controller clear targets sit under .auto and cover journal, snapshot, and 
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
+});
+
+test("the clear handler actually deletes every controller clear target", async () => {
+  // Regression test: controllerClearTargets() was defined but never called, so
+  // docs promised a clear behavior the handler did not implement.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "extensions", "pi-autoresearch", "index.ts"), "utf-8");
+  const clearAt = source.indexOf('if (command === "clear")');
+  assert.ok(clearAt >= 0, "clear handler missing");
+  const block = source.slice(clearAt, source.indexOf('if (runtime.autoresearchMode)', clearAt));
+  assert.ok(block.includes("controllerClearTargets"), "clear handler never calls controllerClearTargets");
+  assert.ok(block.includes("rmSync"), "clear handler never removes the controller targets");
 });
