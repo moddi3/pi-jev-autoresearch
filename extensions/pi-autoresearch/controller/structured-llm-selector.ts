@@ -54,6 +54,10 @@ import {
   assertRevisionFresh,
 } from "./lifecycle.ts";
 import {
+  SELECTION_ENVELOPE_VERSION,
+  buildSelectionEnvelope,
+} from "./envelope.ts";
+import {
   ControllerStoreError,
   newDecisionId,
   sha256Hex,
@@ -209,6 +213,8 @@ export interface StructuredLlmDiagnostics {
   usage: { inputTokens: number | null; outputTokens: number | null };
   policyHash: string;
   selectorInputHash: string;
+  /** Normalized envelope hash over the canonical selection envelope (compare with replay). */
+  envelopeHash: string;
   proposalRound: number;
   consecutiveUnsuccessfulRounds: number;
   rejected: PrefilterRejection[];
@@ -498,6 +504,15 @@ export async function selectWithStructuredLlm(
     attemptedKeys: request.attemptedKeys,
     allowRemeasure: request.allowRemeasure,
   });
+  // Canonical envelope shared with frozen replay (journaled for audit, never
+  // sent to the isolated transport: the prompt carries only instruction plus
+  // neutral options by construction).
+  const runtimeEnvelope = buildSelectionEnvelope({
+    state: state as DecisionState,
+    policy,
+    eligibleIds: prefiltered.eligible.map((entry) => entry.id),
+    selectableOrder: [...prefiltered.eligible.map((entry) => entry.id), REQUEST_NEW_CANDIDATES],
+  });
   const selectorInput = {
     arm: STRUCTURED_LLM_ARM,
     contextIsolation: STRUCTURED_LLM_CONTEXT_ISOLATION,
@@ -507,6 +522,9 @@ export async function selectWithStructuredLlm(
     state,
     policyHash: policy.domainClauseHash,
     diagnostics: prompt.diagnostics,
+    selectableOrder: runtimeEnvelope.selectableOrder,
+    envelopeVersion: SELECTION_ENVELOPE_VERSION,
+    envelopeHash: runtimeEnvelope.semanticInputHash,
   };
   const selectorInputHash = sha256Hex(stableStringify(selectorInput));
 
@@ -682,6 +700,7 @@ export async function selectWithStructuredLlm(
       usage: { ...choice.usage },
       policyHash: policy.domainClauseHash,
       selectorInputHash,
+      envelopeHash: runtimeEnvelope.semanticInputHash,
       proposalRound,
       consecutiveUnsuccessfulRounds: consecutiveUnsuccessful,
       rejected: prefiltered.rejected,

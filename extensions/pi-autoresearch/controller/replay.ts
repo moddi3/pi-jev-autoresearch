@@ -48,11 +48,13 @@ import { createHash } from "node:crypto";
 
 import {
   REQUEST_NEW_CANDIDATES,
-  buildCandidateOptions,
-  compileSelectionInstruction,
   prefilterCandidates,
   type SessionQuestionPolicy,
 } from "./questions.ts";
+import {
+  SELECTION_ENVELOPE_VERSION,
+  buildSelectionEnvelope,
+} from "./envelope.ts";
 import { sha256Hex, stableStringify } from "./store.ts";
 import type { DecisionState } from "./types.ts";
 
@@ -126,14 +128,56 @@ export interface CachedCandidateOutcome {
   source: "cached";
 }
 
-/** What a replayed selector sees: compiled instruction plus ordered options. No outcomes. */
+/**
+ * Predeclared replay grading policy: how invalid attempts and measurement
+ * missingness affect trajectory utility and failure rates.
+ *
+ * - Correctness is part of outcome eligibility. A pick whose cached checks
+ *   are not `"pass"` (failed, not-run, or absent) is ineligible for success:
+ *   it joins no utility, contributes no measured count, and never moves
+ *   mean utility or regret — even when its numerical result looks like an
+ *   improvement.
+ * - Best-utility and regret are computed over passing, measured outcomes
+ *   only. A failed fast result is never the baseline to beat.
+ * - Failed implementations are retained as outcomes/costs, never silently
+ *   dropped: the selection records their `checks` status, the failed outcome
+ *   stays in the outcomes list, and the miss is counted in `checksFailedRate`.
+ * - Measurement missingness stays explicit: unmeasured picks (null utility)
+ *   lower the measured count; invalid picks and new-candidate requests are
+ *   reported as their own rates and never borrow a neighbor's outcome.
+ */
+export const REPLAY_GRADING_POLICY =
+  "Replay grading treats correctness as part of eligibility: only cached outcomes with checks " +
+  '"pass" join a utility. Picks with failed, not-run, or absent checks are ineligible for success ' +
+  "(no utility, no measured count, no regret movement) and are counted in checksFailedRate. Failed " +
+  "implementations are retained as outcomes/costs, never silently dropped; measurement missingness " +
+  "stays explicit via measuredCount, invalidChoiceRate, and newCandidateRate.";
+
+/** True only when a cached outcome is eligible for success: passing checks. */
+export function isEligibleOutcome(outcome: CachedCandidateOutcome | undefined): boolean {
+  return outcome !== undefined && outcome.checks === "pass";
+}
+
+/**
+ * What a replayed selector sees: the canonical selection envelope through
+ * declared fields — frozen decision state, compiled instruction, presented
+ * option ordering, schema/envelope versions, policy identity, and the
+ * semantic input hash. No outcomes: future results stay unreachable.
+ */
 export interface ReplaySelectorInput {
   snapshotId: string;
   condition: ReplayCondition;
+  /** Frozen decision state: candidates, measured history-at-decision-time, budget context. */
+  state: DecisionState;
   instruction: string;
   optionsInOrder: Array<{ id: string; description: string }>;
   eligibleIds: string[];
+  /** Recorded presentation permutation: exactly [...eligibleIds, "request_new_candidates"] in order. */
+  selectableOrder: string[];
   policyHash: string;
+  envelopeVersion: typeof SELECTION_ENVELOPE_VERSION;
+  /** Semantic input hash over the normalized envelope content (compare with the runtime capture). */
+  envelopeHash: string;
 }
 
 /** Raw replayed-selector answer. Latency/spend are fixture-observed, never live. */
@@ -168,8 +212,14 @@ export interface ReplaySelection {
   replayed: true;
   invalidChoice: boolean;
   requestedNewCandidates: boolean;
-  /** Joined cached utility, or null for invalid / new-candidate / unmeasured picks. */
+  /** Joined cached utility, or null for invalid / new-candidate / unmeasured / check-failed picks. */
   utility: number | null;
+  /**
+   * Joined cached checks status, or null for invalid / new-candidate picks
+   * and picks with no cached outcome. Failed implementations travel here as
+   * outcomes/costs — never silently dropped, never scored as improvements.
+   */
+  checks: "pass" | "fail" | "not-run" | null;
   presentedOrder: string[];
   /** Present only when the arm produced no usable pick (e.g. empty mapping). */
   note?: string;
@@ -182,6 +232,8 @@ export interface ReplayReport {
   eligibleIds: string[];
   selectableOrder: string[];
   selections: ReplaySelection[];
+  /** Normalized envelope hash for this replay (compare with the runtime capture). */
+  envelopeHash: string;
   /** Present when the budget supervisor stopped the replay early. */
   aborted?: { arm: ReplayArm; reason: string; completedArms: ReplayArm[] };
   limitations: typeof REPLAY_LIMITATIONS;
@@ -193,6 +245,12 @@ export interface ReplayArmMetrics {
   snapshotId: string;
   invalidChoiceRate: number;
   newCandidateRate: number;
+  /**
+   * Share of valid picks whose cached checks were not `"pass"` (failed,
+   * not-run, or absent). Such picks are ineligible for success per
+   * `REPLAY_GRADING_POLICY`: they join no utility and move no regret.
+   */
+  checksFailedRate: number;
   measuredCount: number;
   meanUtility: number | null;
   bestUtility: number | null;
@@ -210,6 +268,7 @@ export interface AggregatedReplayMetrics {
   snapshots: number;
   meanInvalidChoiceRate: number;
   meanNewCandidateRate: number;
+  meanChecksFailedRate: number;
   meanUtility: number | null;
   meanRegretVsBest: number | null;
 }
@@ -388,8 +447,11 @@ function outcomeById(outcomes: CachedCandidateOutcome[]): Map<string, CachedCand
 
 /**
  * Run every selector on the identical frozen snapshot. Selectors receive the
- * compiled instruction plus options in the recorded order — never the cached
- * outcomes. Outcomes join by stable candidate ID at report time.
+ * canonical selection envelope through declared fields — frozen decision
+ * state, compiled instruction, options in the recorded order, policy
+ * identity, and the semantic input hash — never the cached outcomes.
+ * Outcomes join by stable candidate ID at report time, gated on passing
+ * checks (see `REPLAY_GRADING_POLICY`).
  */
 export async function runFrozenReplay(
   snapshot: FrozenReplaySnapshot,
@@ -407,19 +469,16 @@ export async function runFrozenReplay(
     }
   }
   const eligibleIds = deriveEligibleIds(snapshot);
-  const instruction = compileSelectionInstruction(snapshot.policy);
-  const optionsInOrder = eligibleIds.length === 0
-    ? []
-    : (() => {
-      const options = buildCandidateOptions(
-        snapshot.state.candidates.filter((entry) => eligibleIds.includes(entry.id)),
-      );
-      return snapshot.selectableOrder.map((id) => {
-        const description = options[id];
-        if (typeof description !== "string") snapshotError(`recorded order references unknown option ${JSON.stringify(id)}`);
-        return { id, description: description as string };
-      });
-    })();
+  // Canonical envelope shared with the live runtime: the same builder the
+  // selectors use at dispatch, so the normalized hash is directly comparable.
+  const envelope = buildSelectionEnvelope({
+    state: snapshot.state,
+    policy: snapshot.policy,
+    eligibleIds,
+    selectableOrder: snapshot.selectableOrder,
+  });
+  const instruction = envelope.instruction;
+  const optionsInOrder = envelope.optionsInOrder;
   const joined = outcomeById(outcomes);
   const supervisor = opts.supervisor;
 
@@ -441,6 +500,7 @@ export async function runFrozenReplay(
         invalidChoice: true,
         requestedNewCandidates: false,
         utility: null,
+        checks: null,
         presentedOrder: [...snapshot.selectableOrder],
         note: "no eligible candidates in the frozen mapping; no selector was consulted",
       });
@@ -458,18 +518,30 @@ export async function runFrozenReplay(
     const input: ReplaySelectorInput = {
       snapshotId: snapshot.snapshotId,
       condition: snapshot.condition,
+      state: snapshot.state,
       instruction,
       optionsInOrder,
       eligibleIds: [...eligibleIds],
+      selectableOrder: [...snapshot.selectableOrder],
       policyHash: snapshot.policy.domainClauseHash,
+      envelopeVersion: SELECTION_ENVELOPE_VERSION,
+      envelopeHash: envelope.semanticInputHash,
     };
     const answer = await selector.select(input);
     const allowed = new Set([...eligibleIds, REQUEST_NEW_CANDIDATES]);
     const invalidChoice = typeof answer.selectedId !== "string" || !allowed.has(answer.selectedId);
     const requestedNewCandidates = !invalidChoice && answer.selectedId === REQUEST_NEW_CANDIDATES;
-    const utility = !invalidChoice && !requestedNewCandidates
-      ? (joined.get(answer.selectedId)?.utility ?? null)
-      : null;
+    // Correctness-gated join: only a passing cached outcome is eligible for
+    // success. Failed, not-run, or absent checks join no utility — the pick
+    // is retained with its checks status as an outcome/cost, never scored.
+    const outcome = !invalidChoice && !requestedNewCandidates
+      ? joined.get(answer.selectedId)
+      : undefined;
+    const eligible = isEligibleOutcome(outcome);
+    const utility = eligible ? (outcome?.utility ?? null) : null;
+    const checks = invalidChoice || requestedNewCandidates
+      ? null
+      : (outcome?.checks ?? null);
     selections.push({
       arm: selector.arm,
       selectedId: answer.selectedId,
@@ -482,6 +554,7 @@ export async function runFrozenReplay(
       invalidChoice,
       requestedNewCandidates,
       utility,
+      checks,
       presentedOrder: [...snapshot.selectableOrder],
     });
     supervisor?.charge({ calls: 1, wallMs: answer.fixtureLatencyMs ?? 0, costUsd: answer.spendUsd ?? null });
@@ -493,6 +566,7 @@ export async function runFrozenReplay(
     eligibleIds: [...eligibleIds],
     selectableOrder: [...snapshot.selectableOrder],
     selections,
+    envelopeHash: envelope.semanticInputHash,
     ...(aborted ? { aborted } : {}),
     limitations: REPLAY_LIMITATIONS,
   };
@@ -500,9 +574,12 @@ export async function runFrozenReplay(
 
 /**
  * Compute per-arm metrics for one replay report. Utility and regret average
- * over valid measured picks only; invalid picks and new-candidate requests
- * are reported as their own rates. Regret is measured against the best
- * *cached* candidate outcome in that snapshot.
+ * over valid measured picks only — valid means the pick joined a *passing*
+ * cached outcome (see `REPLAY_GRADING_POLICY`): invalid picks,
+ * new-candidate requests, unmeasured picks, and picks with failed, not-run,
+ * or absent checks report their own rates and never move utility or regret.
+ * Regret is measured against the best *passing, measured* cached outcome in
+ * that snapshot: a failed fast result is never the baseline to beat.
  */
 export function computeReplayMetrics(
   report: ReplayReport,
@@ -513,9 +590,12 @@ export function computeReplayMetrics(
     snapshotError(`direction must be "lower" or "higher", got ${JSON.stringify(opts.direction)}`);
   }
   const joined = outcomeById(outcomes);
+  // Best over passing measured outcomes only: correctness gates contention.
   const measured = report.eligibleIds
-    .map((id) => joined.get(id)?.utility ?? null)
-    .filter((value): value is number => typeof value === "number");
+    .map((id) => joined.get(id))
+    .filter((outcome): outcome is CachedCandidateOutcome =>
+      outcome !== undefined && outcome.checks === "pass" && typeof outcome.utility === "number")
+    .map((outcome) => outcome.utility as number);
   const bestUtility = measured.length === 0
     ? null
     : opts.direction === "lower"
@@ -523,7 +603,13 @@ export function computeReplayMetrics(
       : Math.max(...measured);
 
   return report.selections.map((selection) => {
-    const valid = !selection.invalidChoice && !selection.requestedNewCandidates && typeof selection.utility === "number";
+    const valid = !selection.invalidChoice &&
+      !selection.requestedNewCandidates &&
+      selection.checks === "pass" &&
+      typeof selection.utility === "number";
+    const checksFailed = !selection.invalidChoice &&
+      !selection.requestedNewCandidates &&
+      selection.checks !== "pass";
     const regret = valid && bestUtility !== null
       ? opts.direction === "lower"
         ? (selection.utility as number) - bestUtility
@@ -535,6 +621,7 @@ export function computeReplayMetrics(
       snapshotId: report.snapshotId,
       invalidChoiceRate: selection.invalidChoice ? 1 : 0,
       newCandidateRate: selection.requestedNewCandidates ? 1 : 0,
+      checksFailedRate: checksFailed ? 1 : 0,
       measuredCount: valid ? 1 : 0,
       meanUtility: valid ? (selection.utility as number) : null,
       bestUtility,
@@ -562,6 +649,7 @@ export function aggregateReplayMetrics(all: ReplayArmMetrics[]): AggregatedRepla
     snapshots: list.length,
     meanInvalidChoiceRate: mean(list.map((m) => m.invalidChoiceRate)) as number,
     meanNewCandidateRate: mean(list.map((m) => m.newCandidateRate)) as number,
+    meanChecksFailedRate: mean(list.map((m) => m.checksFailedRate)) as number,
     meanUtility: mean(list.map((m) => m.meanUtility).filter((v): v is number => v !== null)),
     meanRegretVsBest: mean(list.map((m) => m.regretVsBest).filter((v): v is number => v !== null)),
   }));

@@ -54,6 +54,10 @@ import {
   type SessionQuestionPolicy,
 } from "./questions.ts";
 import {
+  SELECTION_ENVELOPE_VERSION,
+  buildSelectionEnvelope,
+} from "./envelope.ts";
+import {
   classifyJevError,
   type JevClient,
   type JevDecision,
@@ -170,6 +174,8 @@ export interface SelectorDiagnostics {
   usage: { inputTokens: number | null; outputTokens: number | null };
   policyHash: string;
   selectorInputHash: string;
+  /** Normalized envelope hash over the canonical selection envelope (compare with replay). */
+  envelopeHash: string;
   proposalRound: number;
   consecutiveUnsuccessfulRounds: number;
   rejected: PrefilterRejection[];
@@ -336,6 +342,15 @@ export async function selectExperiment(
   const options = buildCandidateOptions(prefiltered.eligible);
   const instruction = compileSelectionInstruction(policy);
   const compiledDiagnostics = compileDiagnosticQuestions(policy.diagnostics);
+  // Canonical envelope shared with frozen replay: the normalized hash is
+  // captured here at runtime and compared with the replay hash. Provider
+  // wrappers may differ, but the evidence/candidate content must match.
+  const runtimeEnvelope = buildSelectionEnvelope({
+    state: state as DecisionState,
+    policy,
+    eligibleIds: prefiltered.eligible.map((entry) => entry.id),
+    selectableOrder: [...prefiltered.eligible.map((entry) => entry.id), REQUEST_NEW_CANDIDATES],
+  });
   const selectorInput = {
     questionId: SELECTION_QUESTION_ID,
     instruction,
@@ -343,6 +358,9 @@ export async function selectExperiment(
     state,
     policyHash: policy.domainClauseHash,
     diagnostics: compiledDiagnostics,
+    selectableOrder: runtimeEnvelope.selectableOrder,
+    envelopeVersion: SELECTION_ENVELOPE_VERSION,
+    envelopeHash: runtimeEnvelope.semanticInputHash,
   };
   const selectorInputHash = sha256Hex(stableStringify(selectorInput));
 
@@ -509,6 +527,7 @@ export async function selectExperiment(
       usage: { ...decision.usage },
       policyHash: policy.domainClauseHash,
       selectorInputHash,
+      envelopeHash: runtimeEnvelope.semanticInputHash,
       proposalRound,
       consecutiveUnsuccessfulRounds: consecutiveUnsuccessful,
       rejected: prefiltered.rejected,
