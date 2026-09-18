@@ -53,7 +53,25 @@ import {
 } from "./compaction.ts";
 import { resolveAutoresearchShortcuts, SHORTCUT_ACTIONS } from "./shortcuts.ts";
 import { sessionFilePath, sessionFileCandidates, ensureParentDir, AUTO_DIR } from "./paths.ts";
-import { loadControllerResolution } from "./controller/config.ts";
+import { loadControllerResolution, isControllerEnabled } from "./controller/config.ts";
+import type { ControllerConfig } from "./controller/types.ts";
+import { createJevClient } from "./controller/jev-client.ts";
+import { ControllerLifecycle } from "./controller/lifecycle.ts";
+import { isSelectorLocked } from "./controller/selector.ts";
+import {
+  CANCEL_SELECTION_TOOL,
+  SELECT_EXPERIMENT_TOOL,
+  buildEvidenceCatalog,
+  buildJevProtocolGuidance,
+  decideToolPreflight,
+  executeCancelSelection,
+  executeSelectExperiment,
+  isJevControllerActive,
+  readSourceRevision,
+  type ExperimentSnapshot,
+  type ProposalBooks,
+} from "./controller/tools.ts";
+import { loadPendingSnapshot } from "./controller/store.ts";
 
 // ---------------------------------------------------------------------------
 // Experiment output limits (sent to LLM — keep small to save context)
@@ -1095,11 +1113,111 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
   const getRuntime = (ctx: ExtensionContext): AutoresearchRuntime =>
     runtimeStore.ensure(getSessionKey(ctx));
 
+  // Per-session Jev controller slot: journal-backed lifecycle plus in-memory
+  // proposal-round books. The journal on disk is authoritative across
+  // restarts; the bookkeeping resets per process (ticket 10 hardens it).
+  interface ControllerSession {
+    workDir: string;
+    lifecycle: ControllerLifecycle;
+    books: ProposalBooks;
+  }
+  const controllerSessions = new Map<string, ControllerSession>();
+
+  const getControllerSession = (
+    ctx: ExtensionContext,
+    workDir: string,
+    maxCancellationsPerSegment: number,
+  ): ControllerSession => {
+    const key = getSessionKey(ctx);
+    const existing = controllerSessions.get(key);
+    if (existing && existing.workDir === workDir) return existing;
+    const lifecycle = new ControllerLifecycle(workDir, {
+      sessionId: ctx.sessionManager.getSessionId(),
+      worktree: workDir,
+      maxCancellationsPerSegment,
+    });
+    const entry: ControllerSession = { workDir, lifecycle, books: { round: 0, unsuccessful: 0 } };
+    controllerSessions.set(key, entry);
+    return entry;
+  };
+
+  const dropControllerSession = (ctx: ExtensionContext): void => {
+    controllerSessions.delete(getSessionKey(ctx));
+  };
+
+  /** Live experiment snapshot for selection-state assembly. */
+  const snapshotFromRuntime = (runtime: AutoresearchRuntime): ExperimentSnapshot => ({
+    objective: {
+      name: runtime.state.name ?? "autoresearch",
+      metricName: runtime.state.metricName,
+      direction: runtime.state.bestDirection,
+      unit: runtime.state.metricUnit,
+    },
+    results: runtime.state.results.map((result) => ({
+      metric: result.metric,
+      status: result.status,
+      timestampMs: result.timestamp,
+      commit: result.commit,
+      description: result.description,
+    })),
+    segment: runtime.state.currentSegment,
+    maxExperiments: runtime.state.maxExperiments,
+  });
+
+  /** Work-dir-relative target path for scope checks; outside stays `../…`. */
+  const normalizeToolTarget = (toolPath: string, ctxCwd: string, workDir: string): string => {
+    const absolute = path.isAbsolute(toolPath) ? toolPath : path.resolve(ctxCwd, toolPath);
+    return path.relative(workDir, absolute).split(path.sep).join("/");
+  };
+
+  /** Approved scope of the pending decision, or null when unknown. */
+  const approvedPathsForPending = (lifecycle: ControllerLifecycle): string[] | null => {
+    try {
+      const record = lifecycle.pendingDecisionRecord();
+      if (!record) return null;
+      const selected = record.acceptedCandidates.find(
+        (candidate) => candidate.id === record.selection.selectedId,
+      );
+      if (!selected) return [];
+      return [...selected.filesToChange];
+    } catch {
+      return null;
+    }
+  };
+
   // Registering through this gates the tool, so a new one can't slip in ungated.
+  // Base tools follow autoresearch mode; controller tools additionally require
+  // Jev control (ticket 08), so off-mode activation never exposes selection.
   const gatedToolNames = new Set<string>();
-  const registerGatedTool = (tool: Parameters<typeof pi.registerTool>[0]): void => {
-    gatedToolNames.add(tool.name);
+  const controllerGatedToolNames = new Set<string>();
+  const registerGatedTool = (
+    tool: Parameters<typeof pi.registerTool>[0],
+    opts?: { controller?: boolean },
+  ): void => {
+    (opts?.controller ? controllerGatedToolNames : gatedToolNames).add(tool.name);
     pi.registerTool(tool);
+  };
+
+  /** True only when autoresearch runs AND a valid Jev controller is configured. */
+  const isJevModeFor = (ctx: ExtensionContext): boolean =>
+    getRuntime(ctx).autoresearchMode && isJevControllerActive(ctx.cwd);
+
+  /** Add/remove exactly the controller tools, never touching unrelated tools. */
+  const applyControllerGating = (activeTools: Set<string>, jevMode: boolean): void => {
+    for (const tool of controllerGatedToolNames) {
+      if (jevMode) activeTools.add(tool);
+      else activeTools.delete(tool);
+    }
+  };
+
+  /** Re-sync controller tools (e.g. the config flipped mid-session). No-op when unchanged. */
+  const syncControllerTools = (ctx: ExtensionContext): void => {
+    const activeTools = new Set(pi.getActiveTools());
+    const before = [...activeTools].sort().join("\0");
+    applyControllerGating(activeTools, isJevModeFor(ctx));
+    if ([...activeTools].sort().join("\0") !== before) {
+      pi.setActiveTools([...activeTools]);
+    }
   };
 
   // The one place mode flips: gated tools follow the flag, never drifting from it.
@@ -1109,6 +1227,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     for (const tool of gatedToolNames) {
       enabled ? activeTools.add(tool) : activeTools.delete(tool);
     }
+    applyControllerGating(activeTools, enabled && isJevControllerActive(ctx.cwd));
     pi.setActiveTools([...activeTools]);
   };
 
@@ -1399,6 +1518,28 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       ),
     );
 
+    // Rehydrate the Jev controller slot when Jev control is enabled. The
+    // journal on disk is authoritative; a corrupt journal is reported loudly
+    // instead of silently resetting the pending decision. An invalid config
+    // section stays silent here: before_agent_start already owns that error.
+    try {
+      const resolution = loadControllerResolution(ctx.cwd);
+      if (isControllerEnabled(resolution)) {
+        getControllerSession(ctx, workDir, resolution.config.maxCancellationsPerSegment).lifecycle.recover();
+      } else {
+        dropControllerSession(ctx);
+      }
+    } catch (e) {
+      dropControllerSession(ctx);
+      const isConfigError = e instanceof Error && e.name === "ControllerConfigError";
+      if (!isConfigError && ctx.hasUI) {
+        ctx.ui.notify(
+          `Jev controller recovery: ${e instanceof Error ? e.message : String(e)}`,
+          "error",
+        );
+      }
+    }
+
     updateWidget(ctx);
   };
 
@@ -1481,6 +1622,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     clearSessionUi(ctx);
     cancelPendingResume(getRuntime(ctx));
     runtimeStore.clear(getSessionKey(ctx));
+    dropControllerSession(ctx);
     stopDashboardServer();
   });
 
@@ -1531,13 +1673,14 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     const runtime = getRuntime(ctx);
     if (!runtime.autoresearchMode) return;
 
-    // Jev controller opt-in (ticket 02 wiring only — no selection tools yet).
+    // Jev controller opt-in (ticket 02 wiring, ticket 08 protocol).
     // Absent/off resolves to nothing here, keeping the prompt byte-identical
     // to baseline. Invalid enabled config fails loudly instead of silently
     // running without Jev direction.
     let controllerExtra = "";
+    let jevActive = false;
     try {
-      loadControllerResolution(ctx.cwd);
+      jevActive = isControllerEnabled(loadControllerResolution(ctx.cwd));
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (ctx.hasUI) {
@@ -1581,9 +1724,71 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       extra += `\n\n💡 Ideas backlog exists at ${ideasPath} — check it for promising experiment paths. Prune stale entries.`;
     }
 
+    if (jevActive) {
+      extra += buildJevProtocolGuidance();
+    }
+    // The config may have flipped mid-session; re-sync tool activation so the
+    // selection tools follow Jev control without touching unrelated tools.
+    syncControllerTools(ctx);
+
     return {
       systemPrompt: event.systemPrompt + extra + controllerExtra,
     };
+  });
+
+  // Jev-mode workflow contract (ticket 08, AGENT_HANDOFF.md §7): block
+  // built-in target writes/edits without a pending decision, enforce the
+  // approved scope of the selected experiment, and reject conflicting
+  // simultaneous selection/run operations. Off mode returns without a word.
+  // This is a workflow contract, not a sandbox: a broad `bash` tool can still
+  // modify files, so allowed paths are rechecked before the benchmark
+  // (ticket 09) and violations are logged, never claimed as confinement.
+  pi.on("tool_call", async (event, ctx) => {
+    const runtime = getRuntime(ctx);
+    if (!runtime.autoresearchMode || !isJevControllerActive(ctx.cwd)) return undefined;
+    const workDir = resolveWorkDir(ctx.cwd);
+
+    let stateName: Parameters<typeof decideToolPreflight>[0]["lifecycleState"] = "unknown";
+    let hasPendingDecision = false;
+    let approvedPaths: string[] | null = null;
+    const entry = controllerSessions.get(getSessionKey(ctx));
+    if (entry && entry.workDir === workDir) {
+      stateName = entry.lifecycle.state;
+      hasPendingDecision = entry.lifecycle.pendingDecisionId !== undefined;
+      if (hasPendingDecision) approvedPaths = approvedPathsForPending(entry.lifecycle);
+    } else {
+      try {
+        const snapshot = loadPendingSnapshot(workDir);
+        if (snapshot) {
+          stateName = snapshot.state;
+          hasPendingDecision = true;
+        }
+      } catch {
+        // An unreadable snapshot fails open here; the tools themselves
+        // recover loudly and reject unusable decisions.
+      }
+    }
+
+    const rawPath = (event.toolName === "write" || event.toolName === "edit")
+      && event.input !== null
+      && typeof event.input === "object"
+      && typeof (event.input as { path?: unknown }).path === "string"
+      ? (event.input as { path: string }).path
+      : undefined;
+
+    const decision = decideToolPreflight({
+      toolName: event.toolName,
+      toolPath: rawPath === undefined ? undefined : normalizeToolTarget(rawPath, ctx.cwd, workDir),
+      autoresearchMode: true,
+      controllerEnabled: true,
+      lifecycleState: stateName,
+      hasPendingDecision,
+      hasBaseline: currentResults(runtime.state.results, runtime.state.currentSegment).length > 0,
+      selectionInFlight: isSelectorLocked(workDir),
+      runInFlight: runtime.runningExperiment !== null,
+      approvedPaths,
+    });
+    return decision.block ? { block: true, reason: decision.reason } : undefined;
   });
 
   // -----------------------------------------------------------------------
@@ -2606,6 +2811,213 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
   });
 
   // -----------------------------------------------------------------------
+  // select_experiment / cancel_selection tools (ticket 08, Jev mode only)
+  // -----------------------------------------------------------------------
+  //
+  // Registered through the existing gated helper with the controller flag, so
+  // they stay inactive unless autoresearch AND Jev control are both enabled.
+  // The extension owns candidate ids, option membership, and the
+  // `request_new_candidates` action (see controller/questions.ts); the tools
+  // return structured errors telling the LLM to repair input, resume the
+  // pending action, or stop.
+
+  const SelectExperimentParams = Type.Object({
+    candidates: Type.Array(Type.Unknown(), {
+      description:
+        "2-4 diverse concrete candidates (id, directionId, kind, title, hypothesis, implementationOutline, filesToChange, evidenceRefs, assumptions, risks, expectedObservation, previousAttemptRefs). No metrics, eligibility, cost, outcome, or choice labels.",
+    }),
+    llmContext: Type.Optional(Type.Unknown({
+      description:
+        "Optional { bottleneckHypotheses: string[], unresolvedQuestions: string[] } carried into the decision state.",
+    })),
+    policyDraft: Type.Optional(Type.Unknown({
+      description:
+        "First-call-only { domainClause, diagnostics } draft for the frozen session question plan. Later calls must omit it or reproduce the identical clause.",
+    })),
+  });
+
+  registerGatedTool({
+    name: SELECT_EXPERIMENT_TOOL,
+    label: "Select Experiment",
+    description:
+      "Propose 2-4 concrete experiments for Jev selection (Jev mode only). Jev picks exactly one; implement only the selected experiment within its approved files. Baseline establishment is exempt.",
+    promptSnippet:
+      "Propose concrete experiments for Jev selection (Jev mode only, baseline exempt)",
+    promptGuidelines: [
+      "In Jev mode, call select_experiment with 2-4 diverse concrete candidates before editing any target file.",
+      "Implement ONLY the returned selected experiment within its approved filesToChange — never all candidates, never a substituted alternative.",
+      "Reference only known evidence ids (run-<n>, benchmark-script, experiment-prompt); unknown refs are rejected.",
+    ],
+    parameters: SelectExperimentParams,
+
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const runtime = getRuntime(ctx);
+      if (!runtime.autoresearchMode || !isJevControllerActive(ctx.cwd)) {
+        return {
+          content: [{
+            type: "text",
+            text: "❌ select_experiment is only available when autoresearch and Jev control are both enabled.",
+          }],
+          details: {},
+        };
+      }
+      let resolution: { enabled: true; mode: "jev"; config: ControllerConfig };
+      try {
+        const loaded = loadControllerResolution(ctx.cwd);
+        if (!isControllerEnabled(loaded)) {
+          return {
+            content: [{ type: "text", text: "❌ select_experiment needs a valid `controller: { mode: \"jev\" }` section." }],
+            details: {},
+          };
+        }
+        resolution = loaded;
+      } catch (e) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Jev controller config error: ${e instanceof Error ? e.message : String(e)}. Fix the "controller" section of .auto/config.json. Action: stop.`,
+          }],
+          details: {},
+        };
+      }
+      const workDir = resolveWorkDir(ctx.cwd);
+      const { lifecycle, books } = getControllerSession(
+        ctx,
+        workDir,
+        resolution.config.maxCancellationsPerSegment,
+      );
+      const outcome = await executeSelectExperiment(
+        {
+          candidates: (params as { candidates: unknown }).candidates,
+          llmContext: (params as { llmContext?: unknown }).llmContext,
+          policyDraft: (params as { policyDraft?: unknown }).policyDraft,
+        },
+        {
+          workDir,
+          sessionId: ctx.sessionManager.getSessionId(),
+          worktree: workDir,
+          snapshot: snapshotFromRuntime(runtime),
+          config: resolution.config,
+          lifecycle,
+          evidence: buildEvidenceCatalog(workDir),
+          books,
+          clientFactory: (config) => createJevClient({ model: config.model }),
+          readRevision: () => readSourceRevision(workDir),
+          signal,
+        },
+      );
+      return {
+        content: [{ type: "text", text: outcome.text }],
+        details: outcome.details ?? {},
+      };
+    },
+
+    renderCall(args, theme) {
+      let text = theme.fg("toolTitle", theme.bold("select_experiment "));
+      const count = Array.isArray((args as { candidates?: unknown }).candidates)
+        ? (args as { candidates: unknown[] }).candidates.length
+        : 0;
+      text += theme.fg("accent", `${count} candidate${count === 1 ? "" : "s"}`);
+      return new Text(text, 0, 0);
+    },
+
+    renderResult(result, _options, theme) {
+      const t = result.content[0];
+      return new Text(t?.type === "text" ? t.text : "", 0, 0);
+    },
+  }, { controller: true });
+
+  const CancelSelectionParams = Type.Object({
+    decisionId: Type.String({ description: "Pending decision id to cancel" }),
+    reason: Type.String({
+      description: "Concrete reason the selected implementation is infeasible",
+    }),
+    newEvidenceRefs: Type.Array(Type.String(), {
+      description: "At least one concrete new evidence id supporting the cancellation",
+    }),
+  });
+
+  registerGatedTool({
+    name: CANCEL_SELECTION_TOOL,
+    label: "Cancel Selection",
+    description:
+      "Cancel a pending Jev selection that proved infeasible (Jev mode only). Requires the pending decision id, a concrete reason, and new evidence refs. Capped per segment.",
+    promptSnippet:
+      "Cancel a pending Jev selection with reason + new evidence (Jev mode only)",
+    promptGuidelines: [
+      "Call cancel_selection only for a genuinely infeasible selected experiment, with new evidence.",
+      "Cancellations are capped per segment — repeated cancellations pause the controller.",
+    ],
+    parameters: CancelSelectionParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const runtime = getRuntime(ctx);
+      if (!runtime.autoresearchMode || !isJevControllerActive(ctx.cwd)) {
+        return {
+          content: [{
+            type: "text",
+            text: "❌ cancel_selection is only available when autoresearch and Jev control are both enabled.",
+          }],
+          details: {},
+        };
+      }
+      let resolution: { enabled: true; mode: "jev"; config: ControllerConfig };
+      try {
+        const loaded = loadControllerResolution(ctx.cwd);
+        if (!isControllerEnabled(loaded)) {
+          return {
+            content: [{ type: "text", text: "❌ cancel_selection needs a valid `controller: { mode: \"jev\" }` section." }],
+            details: {},
+          };
+        }
+        resolution = loaded;
+      } catch (e) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Jev controller config error: ${e instanceof Error ? e.message : String(e)}. Fix the "controller" section of .auto/config.json. Action: stop.`,
+          }],
+          details: {},
+        };
+      }
+      const workDir = resolveWorkDir(ctx.cwd);
+      const { lifecycle } = getControllerSession(
+        ctx,
+        workDir,
+        resolution.config.maxCancellationsPerSegment,
+      );
+      const outcome = await executeCancelSelection(
+        {
+          decisionId: (params as { decisionId: unknown }).decisionId,
+          reason: (params as { reason: unknown }).reason,
+          newEvidenceRefs: (params as { newEvidenceRefs: unknown }).newEvidenceRefs,
+        },
+        {
+          workDir,
+          lifecycle,
+          config: resolution.config,
+          evidence: buildEvidenceCatalog(workDir),
+        },
+      );
+      return {
+        content: [{ type: "text", text: outcome.text }],
+        details: outcome.details ?? {},
+      };
+    },
+
+    renderCall(args, theme) {
+      let text = theme.fg("toolTitle", theme.bold("cancel_selection "));
+      text += theme.fg("accent", String((args as { decisionId?: unknown }).decisionId ?? ""));
+      return new Text(text, 0, 0);
+    },
+
+    renderResult(result, _options, theme) {
+      const t = result.content[0];
+      return new Text(t?.type === "text" ? t.text : "", 0, 0);
+    },
+  }, { controller: true });
+
+  // -----------------------------------------------------------------------
   // Fullscreen scrollable dashboard overlay
   // -----------------------------------------------------------------------
 
@@ -3031,6 +3443,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     runtime.lastRunDuration = null;
     runtime.runningExperiment = null;
     cancelPendingResume(runtime);
+    dropControllerSession(ctx);
     stopDashboardServer();
     clearSessionUi(ctx);
     if (wasRunning) ctx.abort();
@@ -3078,6 +3491,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         runtime.lastRunDuration = null;
         runtime.runningExperiment = null;
         cancelPendingResume(runtime);
+        dropControllerSession(ctx);
         runtime.state = createExperimentState();
         stopDashboardServer();
         updateWidget(ctx);
