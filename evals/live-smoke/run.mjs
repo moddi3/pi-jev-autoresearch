@@ -190,7 +190,9 @@ async function makeSmokeRepo(parentDir) {
 // Scripted five-attempt plan. Attempt 2 is a remeasure (no edits); attempt 3
 // carries the interrupt+resume; attempt 4 is a regression probe that must
 // honestly discard. Usage tokens are distinct per attempt so the transcript
-// shows real per-decision accounting.
+// shows real per-decision accounting. The `choice` pin applies to mock mode
+// only; in live mode Jev's actual pick is implemented (every candidate has a
+// fixture, and remeasure picks apply no edit).
 // ---------------------------------------------------------------------------
 
 const PLAN = [
@@ -205,7 +207,6 @@ const PLAN = [
     outline: "Replace the includes-scan dedupe with new Set(input) and keep the runtime sort.",
     expected: "runtime_ms drops from 100 to 50 on the fixture benchmark.",
     fixtureFile: "attempt1-set.ts",
-    description: "set-based dedupe",
     inputTokens: 137,
     outputTokens: 13,
   },
@@ -214,13 +215,16 @@ const PLAN = [
     editId: "a2-filter-dedupe",
     remeasureId: "a2-remeasure",
     choice: "a2-remeasure",
-    directionId: "confirm-retained",
-    title: "Decoy edit (not selected)",
-    hypothesis: "Remeasurement is the honest next step: confirm the retained code first.",
-    outline: "Remeasure without code changes.",
-    expected: "Same runtime_ms as the retained run.",
-    fixtureFile: null,
-    description: "remeasure retained code",
+    directionId: "filter-based-dedupe",
+    title: "Filter/indexOf dedupe with runtime sort",
+    hypothesis: "A filter-based dedupe is correct; without a structural speed change it likely matches the retained runtime.",
+    outline: "Dedupe with filter/indexOf, then sort numerically.",
+    expected: "runtime_ms stays 100; equal to retained, so discard.",
+    // Every offered candidate must stay implementable: live Jev may select
+    // this edit instead of the scripted remeasure, and the harness then
+    // implements the actual pick. Correct but unmarked, so it honestly
+    // discards at 100.
+    fixtureFile: "attempt2-filter.ts",
     inputTokens: 154,
     outputTokens: 14,
   },
@@ -235,7 +239,6 @@ const PLAN = [
     outline: "Collect first-seen values in a Map, then sort the keys.",
     expected: "runtime_ms stays 50; equal to retained, so discard.",
     fixtureFile: "attempt3-map.ts",
-    description: "map-based dedupe",
     interruptAfterSelect: true,
     inputTokens: 171,
     outputTokens: 15,
@@ -251,7 +254,6 @@ const PLAN = [
     outline: "Dedupe with filter/indexOf and sort by insertion.",
     expected: "runtime_ms regresses to 100 and discards against the retained 50.",
     fixtureFile: "attempt4-slow-variant.ts",
-    description: "regression probe",
     inputTokens: 188,
     outputTokens: 16,
   },
@@ -266,7 +268,6 @@ const PLAN = [
     outline: "Sort a copy, then keep values that differ from their predecessor.",
     expected: "runtime_ms stays 50; equal to retained, so discard.",
     fixtureFile: "attempt5-sort.ts",
-    description: "sort-first dedupe",
     inputTokens: 205,
     outputTokens: 17,
   },
@@ -421,8 +422,16 @@ export async function runLiveSmoke(options = {}) {
         throw new Error(`attempt ${plan.attempt} select failed: ${selected.content[0].text}`);
       }
       const decisionId = selected.details.decisionId;
-      if (selected.details.selectedId !== plan.choice) {
-        throw new Error(`attempt ${plan.attempt}: expected ${plan.choice}, got ${selected.details.selectedId}`);
+      const selectedId = selected.details.selectedId;
+      const selectedCandidate = candidates.find((entry) => entry.id === selectedId);
+      if (!selectedCandidate) {
+        throw new Error(`attempt ${plan.attempt}: Jev selected unknown id ${selectedId}`);
+      }
+      // Mock mode pins the scripted pick, so a mismatch is a harness bug.
+      // Live mode follows Jev's actual selection: a divergent pick is real
+      // selector output, and the harness implements it below.
+      if (transport === "mock" && selectedId !== plan.choice) {
+        throw new Error(`attempt ${plan.attempt}: expected ${plan.choice}, got ${selectedId}`);
       }
 
       // Interrupt once, mid-trajectory, right after selection: drop the whole
@@ -443,7 +452,11 @@ export async function runLiveSmoke(options = {}) {
         }
       }
 
-      if (plan.fixtureFile) {
+      // Implement the actual selection, not the script: an "edit" pick applies
+      // its fixture, a "remeasure" pick leaves the retained code untouched.
+      // In mock mode the fixture queue pins the scripted choice, so this
+      // matches the old plan-driven behavior exactly.
+      if (selectedCandidate.kind === "edit" && plan.fixtureFile) {
         await copyFile(join(FIXTURE_DIR, plan.fixtureFile), join(cwd, "src", "transform.ts"));
       }
       const run = await harness.tools.get("run_experiment").execute(
@@ -458,10 +471,10 @@ export async function runLiveSmoke(options = {}) {
       const logged = await harness.tools.get("log_experiment").execute(
         `smoke-log-${plan.attempt + 1}`,
         {
-          commit: LOG_COMMIT, metric, status, description: `smoke attempt ${plan.attempt}: ${plan.description}`,
+          commit: LOG_COMMIT, metric, status, description: `smoke attempt ${plan.attempt}: ${selectedId} — ${selectedCandidate.title}`,
           asi: status === "keep"
-            ? { hypothesis: plan.hypothesis }
-            : { hypothesis: plan.hypothesis, rollback_reason: metric >= best ? "no improvement over retained" : "regressed", next_action_hint: "try a structural change" },
+            ? { hypothesis: selectedCandidate.hypothesis }
+            : { hypothesis: selectedCandidate.hypothesis, rollback_reason: metric >= best ? "no improvement over retained" : "regressed", next_action_hint: "try a structural change" },
         },
         undefined, undefined, harness.ctx,
       );
@@ -536,6 +549,7 @@ export async function runLiveSmoke(options = {}) {
       limitations: [
         "The fixture benchmark is synthetic and marker-keyed; its numbers prove protocol function, not performance gains.",
         "Scripted fixtures stand in for an LLM proposer; selector quality is not evaluated here (see tickets 13-16).",
+        "In live mode the harness implements whichever candidate Jev selects (edit fixtures or clean remeasure); the scripted PLAN pins only mock-mode picks.",
         "One interrupt+resume point (after selection, attempt 3); restart-after-benchmark and restart-after-log are covered by ticket 11.",
       ],
       nextCommand: "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/live-smoke/run.mjs --mode=live --out evals/live-smoke/transcript.live.json",

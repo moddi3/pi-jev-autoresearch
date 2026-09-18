@@ -4,10 +4,10 @@
   "objective": "dedupe-and-sort",
   "transport": "mock",
   "model": "jev-1.13.0",
-  "forkSha": "aef9ba3f727b86143928c9ed1494597df4f44d70",
+  "forkSha": "5898650275be2cd2ba0dbcd866cea313eaaabadd",
   "upstreamSha": "939ede8220daad440eac6bb7b6e315cc283e0a64",
-  "startedAt": "2026-09-18T15:07:52.374Z",
-  "finishedAt": "2026-09-18T15:07:53.788Z",
+  "startedAt": "2026-09-18T15:24:08.596Z",
+  "finishedAt": "2026-09-18T15:24:09.923Z",
   "live": {
     "status": "BLOCKED",
     "reason": "TYPESAFE_API_KEY is absent: live validation is BLOCKED; mock-backed path only"
@@ -24,14 +24,14 @@
   "attempts": [
     {
       "attempt": 1,
-      "decisionId": "dec-468e987e-9e65-4a99-9589-359d1e9ec8ae",
+      "decisionId": "dec-cf3e254e-78fd-42f3-b219-c7702cf1a1f9",
       "selectedId": "a1-set-dedupe",
       "upstreamRun": 2,
-      "outcomeLink": "dec-468e987e-9e65-4a99-9589-359d1e9ec8ae",
+      "outcomeLink": "dec-cf3e254e-78fd-42f3-b219-c7702cf1a1f9",
       "status": "keep",
       "metric": 50,
-      "patchHash": "f7e12b0632aaeab6bba79025182fab63d2142a84a0bd6d864394d8c2c4f4d998",
-      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "patchHash": "aa4a8cb26d82adb2edc6b7bc4a5dbc3b6a37220027bd630d5de3e42657214cf7",
+      "postLogCommit": "3f3c9a1377e45eea0535fbf4b0aa1067f218d6c4",
       "probabilities": {
         "a1-remeasure": 0.15,
         "a1-set-dedupe": 0.7,
@@ -44,21 +44,21 @@
         "inputTokens": 137,
         "outputTokens": 13
       },
-      "latencyMs": 52,
-      "selectorMs": 26,
+      "latencyMs": 44,
+      "selectorMs": 23,
       "replayed": true,
       "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
     },
     {
       "attempt": 2,
-      "decisionId": "dec-853f0d9f-e3d2-4be1-a99c-4f7a95b5c4c3",
+      "decisionId": "dec-b69c164a-bbc9-439e-b2c2-25a234c94146",
       "selectedId": "a2-remeasure",
       "upstreamRun": 3,
-      "outcomeLink": "dec-853f0d9f-e3d2-4be1-a99c-4f7a95b5c4c3",
+      "outcomeLink": "dec-b69c164a-bbc9-439e-b2c2-25a234c94146",
       "status": "discard",
       "metric": 50,
-      "patchHash": "2b716ff4bfe78fb8471c1efc0e4680ad56700ec05b20495e190ec76fe80061f6",
-      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "patchHash": "f4375a4f02398bb31bf5f67a47c1fce2d3727bb0585b58e69c683af6d14522c5",
+      "postLogCommit": "3f3c9a1377e45eea0535fbf4b0aa1067f218d6c4",
       "probabilities": {
         "a2-filter-dedupe": 0.15,
         "a2-remeasure": 0.7,
@@ -71,21 +71,21 @@
         "inputTokens": 154,
         "outputTokens": 14
       },
-      "latencyMs": 39,
-      "selectorMs": 19,
+      "latencyMs": 38,
+      "selectorMs": 18,
       "replayed": true,
       "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
     },
     {
       "attempt": 3,
-      "decisionId": "dec-b7433b08-9756-438b-bb4b-66e1383ea5f7",
+      "decisionId": "dec-fea5641a-fc0b-4043-8b56-34596a2da9bf",
       "selectedId": "a3-map-dedupe",
       "upstreamRun": 4,
-      "outcomeLink": "dec-b7433b08-9756-438b-bb4b-66e1383ea5f7",
+      "outcomeLink": "dec-fea5641a-fc0b-4043-8b56-34596a2da9bf",
       "status": "discard",
       "metric": 50,
-      "patchHash": "083ee2bf4e134826433b19f074ac81503813c8cd3d5717bb5a6e98d824586904",
-      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "patchHash": "1be094e9f05167787d62960160c8e85077d8b58c3d0e63017f575d5ffbf6bfb0",
+      "postLogCommit": "3f3c9a1377e45eea0535fbf4b0aa1067f218d6c4",
       "probabilities": {
         "a3-map-dedupe": 0.7,
         "a3-remeasure": 0.15,
@@ -98,21 +98,21 @@
         "inputTokens": 171,
         "outputTokens": 15
       },
-      "latencyMs": 37,
+      "latencyMs": 36,
       "selectorMs": 19,
       "replayed": true,
       "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
     },
     {
       "attempt": 4,
-      "decisionId": "dec-c6e5a249-dcf1-466e-a1ab-f37807b6d984",
+      "decisionId": "dec-d50e557f-779a-4f8c-9324-bac05d130d1a",
       "selectedId": "a4-slow-variant",
       "upstreamRun": 5,
-      "outcomeLink": "dec-c6e5a249-dcf1-466e-a1ab-f37807b6d984",
+      "outcomeLink": "dec-d50e557f-779a-4f8c-9324-bac05d130d1a",
       "status": "discard",
       "metric": 100,
-      "patchHash": "3ab492cc8756161b357a827ed7bd1cb4bbc3202010fa823bd43e5ff85f34e76f",
-      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "patchHash": "1f9bd12b58b1afc35869c5427ed685e3c4612c84e28b79c65ff8bc695b43bc29",
+      "postLogCommit": "3f3c9a1377e45eea0535fbf4b0aa1067f218d6c4",
       "probabilities": {
         "a4-remeasure": 0.15,
         "a4-slow-variant": 0.7,
@@ -125,21 +125,21 @@
         "inputTokens": 188,
         "outputTokens": 16
       },
-      "latencyMs": 38,
-      "selectorMs": 19,
+      "latencyMs": 36,
+      "selectorMs": 18,
       "replayed": true,
       "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
     },
     {
       "attempt": 5,
-      "decisionId": "dec-1bd7f87e-2b4a-444b-b6af-968536632704",
+      "decisionId": "dec-b0060a67-37c8-4f0f-9974-d5eb6906b472",
       "selectedId": "a5-sort-first",
       "upstreamRun": 6,
-      "outcomeLink": "dec-1bd7f87e-2b4a-444b-b6af-968536632704",
+      "outcomeLink": "dec-b0060a67-37c8-4f0f-9974-d5eb6906b472",
       "status": "discard",
       "metric": 50,
-      "patchHash": "a7fea7f9a1d3bf51d25573c243e5d57639209ba145382b69f8b02f5dd3c8a161",
-      "postLogCommit": "6708559ba2b626a7ac5210cb7b78e6a888861f8d",
+      "patchHash": "48dcd0e91990ceaaed80d81a98c63567f11fa8bb4e24d196a50db6baa0b52e5b",
+      "postLogCommit": "3f3c9a1377e45eea0535fbf4b0aa1067f218d6c4",
       "probabilities": {
         "a5-remeasure": 0.15,
         "a5-sort-first": 0.7,
@@ -152,8 +152,8 @@
         "inputTokens": 205,
         "outputTokens": 17
       },
-      "latencyMs": 38,
-      "selectorMs": 19,
+      "latencyMs": 36,
+      "selectorMs": 18,
       "replayed": true,
       "replayedDerivedFrom": "mock transport sets x-jev-fixture-replay, the header the adapter reads"
     }
@@ -162,7 +162,7 @@
     "attempt": 3,
     "interruptedAfter": "selection",
     "recoveredState": "selected",
-    "recoveredDecisionId": "dec-b7433b08-9756-438b-bb4b-66e1383ea5f7",
+    "recoveredDecisionId": "dec-fea5641a-fc0b-4043-8b56-34596a2da9bf",
     "pendingPreserved": true
   },
   "bestKept": {
@@ -178,6 +178,7 @@
   "limitations": [
     "The fixture benchmark is synthetic and marker-keyed; its numbers prove protocol function, not performance gains.",
     "Scripted fixtures stand in for an LLM proposer; selector quality is not evaluated here (see tickets 13-16).",
+    "In live mode the harness implements whichever candidate Jev selects (edit fixtures or clean remeasure); the scripted PLAN pins only mock-mode picks.",
     "One interrupt+resume point (after selection, attempt 3); restart-after-benchmark and restart-after-log are covered by ticket 11."
   ],
   "nextCommand": "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/live-smoke/run.mjs --mode=live --out evals/live-smoke/transcript.live.json"
