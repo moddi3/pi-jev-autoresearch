@@ -1,0 +1,1525 @@
+{
+  "version": 1,
+  "ticket": "15-paired-pilot",
+  "transport": "mock",
+  "model": "jev-1.13.0",
+  "forkSha": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+  "upstreamSha": "939ede8220daad440eac6bb7b6e315cc283e0a64",
+  "startedAt": "2026-09-18T15:14:04.594Z",
+  "finishedAt": "2026-09-18T15:14:04.629Z",
+  "live": {
+    "status": "BLOCKED",
+    "reason": "TYPESAFE_API_KEY is absent: live pilot is BLOCKED; mock-backed frozen comparison only"
+  },
+  "predeclaration": {
+    "primaryBudgetBasis": "money",
+    "smallestUsefulEffect": {
+      "normalizedGain": 0.05
+    },
+    "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+    "note": "Budget basis and smallest useful effect were fixed before confirmatory outcomes were inspected; no sampling until a favorable result appears."
+  },
+  "plan": {
+    "tasks": [
+      {
+        "taskId": "pilot-dedupe-transform",
+        "family": "pure-transformation",
+        "partition": "dev"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "family": "build-artifact",
+        "partition": "dev"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "family": "test-execution",
+        "partition": "dev"
+      }
+    ],
+    "trialsPerArm": 3,
+    "slotsPerTrial": 10,
+    "entries": 27,
+    "totalPostBaselineSlots": 270,
+    "blocks": [
+      {
+        "taskId": "pilot-dedupe-transform",
+        "trial": 0,
+        "order": [
+          "structured_jev",
+          "structured_llm",
+          "baseline_upstream"
+        ]
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "trial": 1,
+        "order": [
+          "structured_jev",
+          "structured_llm",
+          "baseline_upstream"
+        ]
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "trial": 2,
+        "order": [
+          "structured_llm",
+          "structured_jev",
+          "baseline_upstream"
+        ]
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "trial": 0,
+        "order": [
+          "structured_jev",
+          "structured_llm",
+          "baseline_upstream"
+        ]
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "trial": 1,
+        "order": [
+          "structured_llm",
+          "structured_jev",
+          "baseline_upstream"
+        ]
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "trial": 2,
+        "order": [
+          "structured_jev",
+          "baseline_upstream",
+          "structured_llm"
+        ]
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "trial": 0,
+        "order": [
+          "baseline_upstream",
+          "structured_llm",
+          "structured_jev"
+        ]
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "trial": 1,
+        "order": [
+          "structured_jev",
+          "structured_llm",
+          "baseline_upstream"
+        ]
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "trial": 2,
+        "order": [
+          "structured_llm",
+          "structured_jev",
+          "baseline_upstream"
+        ]
+      }
+    ],
+    "timingIsolation": "serial-execution-no-concurrent-benchmarks",
+    "diagnosticNote": "Diagnostic scale (3 tasks × 3 trials × 10 post-baseline slots = 270 slots, plus separately accounted baseline and final-validation work): variance and debugging signal only, not statistical power."
+  },
+  "pairing": {
+    "validated": true,
+    "rules": [
+      "same initial revision, prompt, allowed files, seeds, benchmark/check scripts, model versions, environment, and budget policy per task/trial pairing",
+      "one frozen domain question plan shared by the structured arms per pairing",
+      "fresh worktree, conversation, and isolated caches per arm",
+      "block-randomized arm order with recorded permutations",
+      "serial schedule: noisy timing benchmarks never run concurrently"
+    ]
+  },
+  "armSubstitution": {
+    "arm": "baseline_upstream",
+    "substitution": "off-mode parity substitute (not a live upstream checkout run)",
+    "parityEvidence": "tests/controller-off-parity.test.mjs (absent controller is byte-for-byte identical to explicit off)"
+  },
+  "manifests": {
+    "count": 27,
+    "hashes": [
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "structured_jev",
+        "repetition": 0,
+        "hash": "c1e52be005690da502b56496b8873d0adff264e0cc46d64468ab56049c1da3e5"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "structured_llm",
+        "repetition": 0,
+        "hash": "80a2a4eeea73ed8db6685f80cc28ddc227aa1431838826e49e3f11f075f3e40f"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "baseline_upstream",
+        "repetition": 0,
+        "hash": "8529118c5d2767740d7c93216a1f89fa370953ee44d234f11007efd611b41e3f"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "structured_jev",
+        "repetition": 1,
+        "hash": "cf9e72f13f335ec2285c016b94a0df27fbbbe507ce74f0321c0ef894ba3ffb1a"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "structured_llm",
+        "repetition": 1,
+        "hash": "ef41d49d0504fffc5dfdb4c6c45e2664a47accde99a751f0fed1f73d1d7d19c2"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "baseline_upstream",
+        "repetition": 1,
+        "hash": "70a64f93afb93f3598f2c07a63b7c0be056d5b439dfe183215222a791b164809"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "structured_llm",
+        "repetition": 2,
+        "hash": "f56c70795bfbc60839008896549ac4b578b78b68291a7d131b8794677100e1c0"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "structured_jev",
+        "repetition": 2,
+        "hash": "495498db27484601f2ee7fd387137e95f57ff6e32a866cb40c49acaab787b293"
+      },
+      {
+        "taskId": "pilot-dedupe-transform",
+        "arm": "baseline_upstream",
+        "repetition": 2,
+        "hash": "de83a5b5a3c3b2833212fc6837989ad911b22b6666c4d74d0f1ed9f41c05a129"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "structured_jev",
+        "repetition": 0,
+        "hash": "dfd7f97fc41227d3d1d99427a49d16947ec7a1fd447cb79fd9e08678a54adfad"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "structured_llm",
+        "repetition": 0,
+        "hash": "19bd337b93ac5f6e98b3fb83e6e19e01fa44687f2139f3f4ff43cea029e93e6c"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "baseline_upstream",
+        "repetition": 0,
+        "hash": "98fdf58e4230aed9478870c61c376e4db03a81c43688424153646b21ab0150a8"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "structured_llm",
+        "repetition": 1,
+        "hash": "82132a97479d81c9a6e5db105ca9ec4977de585f92159e17839b984dabbe1286"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "structured_jev",
+        "repetition": 1,
+        "hash": "09ecd1077b55de157018add3cda8bee611429183696cf23db647e0a07cf269bc"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "baseline_upstream",
+        "repetition": 1,
+        "hash": "ab5a77e00cf4644cf565fbe12206cb6b6f93c5c78cb00a96dfbbfc0d1a65c5e2"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "structured_jev",
+        "repetition": 2,
+        "hash": "530026c79494e09d57b4f7f332fb9ac6c130737aec704fd65cb2d17787c0f68f"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "baseline_upstream",
+        "repetition": 2,
+        "hash": "6b6437d07a01f6054042d9a67937635a9b4997d9c07963dd0c2255fd37bbd6d7"
+      },
+      {
+        "taskId": "pilot-bundle-artifact",
+        "arm": "structured_llm",
+        "repetition": 2,
+        "hash": "e560214df527ff03f58d69fd6269cd2eee9dc82775a2f00ae6efd12a6aacaaea"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "baseline_upstream",
+        "repetition": 0,
+        "hash": "7bd9032360bac30aaa37c0f9cea36dec03b8748b7af249cbf9c19a578e676e2f"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "structured_llm",
+        "repetition": 0,
+        "hash": "0fbb5dd04d574fe6093d2af3ab31b826c69faac46804a8dcb132f4894b76a032"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "structured_jev",
+        "repetition": 0,
+        "hash": "cdd0fca23931d3cbb3dff4ccdf8c072076232949c74785bcd558c329e4f6c05d"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "structured_jev",
+        "repetition": 1,
+        "hash": "295f7c6d90ca8689de4c7e23716b01941da1d4c4a754b264ac91a300b400f30b"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "structured_llm",
+        "repetition": 1,
+        "hash": "75cee966b3fa272d459d391bed87e3527025cae700bd563b2b6707f889c93a72"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "baseline_upstream",
+        "repetition": 1,
+        "hash": "60a4864964c3cdbc494c51dcba3601b80f07923b82f43ff555873199298235b3"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "structured_llm",
+        "repetition": 2,
+        "hash": "ca2dcc2498c7c295fff0ec028227d7284f9a84fd7a0df290e423bef16b764960"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "structured_jev",
+        "repetition": 2,
+        "hash": "b55b1adb3be2eb3865e451dd50e73675558b1ec2eef8927933e7b280f284c272"
+      },
+      {
+        "taskId": "pilot-test-execution",
+        "arm": "baseline_upstream",
+        "repetition": 2,
+        "hash": "056d24304e2085595926e1bd47afb0d898869255e0cb6a1bbf71b50d5ddd381b"
+      }
+    ],
+    "records": [
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.621Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-dedupe-transform",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-parse-v3",
+        "checksId": "checks-parse-v3",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-bundle-artifact",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-bundle-v1",
+        "checksId": "checks-bundle-v1",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 0,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 1,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "structured_llm",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "structured_jev",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      },
+      {
+        "manifestVersion": 1,
+        "taskId": "pilot-test-execution",
+        "partition": "dev",
+        "arm": "baseline_upstream",
+        "repetition": 2,
+        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "seeds": {
+          "workload": 42,
+          "order": 11
+        },
+        "environment": {
+          "node": "v24.21.0",
+          "platform": "darwin"
+        },
+        "modelVersions": {
+          "piModel": "pi-test-1",
+          "jevModel": "jev-1.13.0",
+          "selectorModel": "jev-1.13.0"
+        },
+        "promptText": "Optimize the target within the allowed files. Propose diverse concrete experiments; implement only the selected one.",
+        "promptHash": "d6f9f4ba7b2cedcd8ce643931faaa8fdea757b35f98721f56031b60f5ccaad9f",
+        "policyClause": "Prefer the hypothesis with direct tool-observed support.",
+        "policyHash": "539468a7f09ca826d47935828f19c57640061aefc52011123ace4ab58e6ccd5f",
+        "lockfileHashes": {
+          "pnpmLock": "6d40ac3ec37f0c3165032fd23c8dc875f14ac3cdf69662f7847afdd4db37d6e4",
+          "packageLock": "eece97c92d4904da4208d377220b4e1abe3d7d4e29c17ce30ef734dd6cb0bb7e"
+        },
+        "budgetPolicy": {
+          "maxCostUsd": 5,
+          "maxExperiments": 10
+        },
+        "benchmarkId": "bench-tests-v2",
+        "checksId": "checks-tests-v2",
+        "createdAt": "2026-09-18T15:14:04.622Z"
+      }
+    ]
+  },
+  "frozenComparison": {
+    "snapshots": 24,
+    "perSnapshot": [
+      {
+        "snapshotId": "labeled-success-01",
+        "family": "success",
+        "gainJev": 0.37,
+        "gainLlm": 0.04,
+        "diffCB": 0.33
+      },
+      {
+        "snapshotId": "labeled-success-02",
+        "family": "success",
+        "gainJev": 0.36,
+        "gainLlm": 0.04,
+        "diffCB": 0.32
+      },
+      {
+        "snapshotId": "labeled-success-03",
+        "family": "success",
+        "gainJev": 0.35,
+        "gainLlm": 0.04,
+        "diffCB": 0.31
+      },
+      {
+        "snapshotId": "labeled-success-04",
+        "family": "success",
+        "gainJev": 0.34,
+        "gainLlm": 0.04,
+        "diffCB": 0.30000000000000004
+      },
+      {
+        "snapshotId": "labeled-success-05",
+        "family": "success",
+        "gainJev": 0.33,
+        "gainLlm": 0.04,
+        "diffCB": 0.29000000000000004
+      },
+      {
+        "snapshotId": "labeled-success-06",
+        "family": "success",
+        "gainJev": 0.32,
+        "gainLlm": 0.04,
+        "diffCB": 0.28
+      },
+      {
+        "snapshotId": "labeled-failure-01",
+        "family": "failure",
+        "gainJev": null,
+        "gainLlm": 0.03,
+        "diffCB": null
+      },
+      {
+        "snapshotId": "labeled-failure-02",
+        "family": "failure",
+        "gainJev": null,
+        "gainLlm": null,
+        "diffCB": null
+      },
+      {
+        "snapshotId": "labeled-failure-03",
+        "family": "failure",
+        "gainJev": null,
+        "gainLlm": 0.03,
+        "diffCB": null
+      },
+      {
+        "snapshotId": "labeled-failure-04",
+        "family": "failure",
+        "gainJev": null,
+        "gainLlm": null,
+        "diffCB": null
+      },
+      {
+        "snapshotId": "labeled-failure-05",
+        "family": "failure",
+        "gainJev": null,
+        "gainLlm": 0.03,
+        "diffCB": null
+      },
+      {
+        "snapshotId": "labeled-failure-06",
+        "family": "failure",
+        "gainJev": null,
+        "gainLlm": null,
+        "diffCB": null
+      },
+      {
+        "snapshotId": "labeled-plateau-01",
+        "family": "plateau",
+        "gainJev": 0.135,
+        "gainLlm": 0.12400000000000005,
+        "diffCB": 0.010999999999999954
+      },
+      {
+        "snapshotId": "labeled-plateau-02",
+        "family": "plateau",
+        "gainJev": 0.13,
+        "gainLlm": 0.11900000000000005,
+        "diffCB": 0.010999999999999954
+      },
+      {
+        "snapshotId": "labeled-plateau-03",
+        "family": "plateau",
+        "gainJev": 0.14,
+        "gainLlm": 0.12900000000000006,
+        "diffCB": 0.010999999999999954
+      },
+      {
+        "snapshotId": "labeled-plateau-04",
+        "family": "plateau",
+        "gainJev": 0.135,
+        "gainLlm": 0.12400000000000005,
+        "diffCB": 0.010999999999999954
+      },
+      {
+        "snapshotId": "labeled-plateau-05",
+        "family": "plateau",
+        "gainJev": 0.13,
+        "gainLlm": 0.11900000000000005,
+        "diffCB": 0.010999999999999954
+      },
+      {
+        "snapshotId": "labeled-plateau-06",
+        "family": "plateau",
+        "gainJev": 0.14,
+        "gainLlm": 0.12900000000000006,
+        "diffCB": 0.010999999999999954
+      },
+      {
+        "snapshotId": "labeled-insufficient-01",
+        "family": "insufficient-evidence",
+        "gainJev": 0.21,
+        "gainLlm": 0.05,
+        "diffCB": 0.15999999999999998
+      },
+      {
+        "snapshotId": "labeled-insufficient-02",
+        "family": "insufficient-evidence",
+        "gainJev": 0.2,
+        "gainLlm": 0.06,
+        "diffCB": 0.14
+      },
+      {
+        "snapshotId": "labeled-insufficient-03",
+        "family": "insufficient-evidence",
+        "gainJev": 0.19,
+        "gainLlm": 0.07,
+        "diffCB": 0.12
+      },
+      {
+        "snapshotId": "labeled-insufficient-04",
+        "family": "insufficient-evidence",
+        "gainJev": 0.18,
+        "gainLlm": 0.08,
+        "diffCB": 0.09999999999999999
+      },
+      {
+        "snapshotId": "labeled-insufficient-05",
+        "family": "insufficient-evidence",
+        "gainJev": 0.17,
+        "gainLlm": 0.09,
+        "diffCB": 0.08000000000000002
+      },
+      {
+        "snapshotId": "labeled-insufficient-06",
+        "family": "insufficient-evidence",
+        "gainJev": 0.16,
+        "gainLlm": 0.1,
+        "diffCB": 0.06
+      }
+    ],
+    "pairedCB": {
+      "mean": 0.14200000000000002,
+      "ci": {
+        "mean": 0.14200000000000002,
+        "lo": 0.010999999999999954,
+        "hi": 0.3022222222222223,
+        "resamples": 2000
+      },
+      "pairs": 18
+    },
+    "armMetrics": {
+      "structured_jev": {
+        "meanUtility": null,
+        "meanRegretVsBest": 0,
+        "snapshots": 24
+      },
+      "structured_llm": {
+        "meanUtility": null,
+        "meanRegretVsBest": 12.171428571428569,
+        "snapshots": 24
+      }
+    },
+    "mockSelectors": true,
+    "diagnosticPlumbing": true,
+    "noQualityClaim": true,
+    "uncertaintyPreliminary": true,
+    "limitations": "Frozen-state replay approximates one-step choice quality from cached, materialized outcomes; a fixed representative patch does not prove all implementations of an idea equal, and replay cannot measure long-term exploration value. Mock selector stand-ins verify the analysis plumbing only and support no selector-quality claim. Live trajectories are BLOCKED without TYPESAFE_API_KEY, never passed. Publish failures and null results as well as wins.",
+    "direction": "lower",
+    "selectorStandIns": {
+      "structured_jev": "mock first-eligible (outcome-blind)",
+      "structured_llm": "mock last-eligible (outcome-blind)"
+    }
+  },
+  "trajectories": {
+    "status": "BLOCKED-live",
+    "note": "Live A/B/C trajectories are BLOCKED on TYPESAFE_API_KEY: manifests and the serial schedule are planned and pairing-validated, but no live trajectory ran and no trajectory outcome is claimed.",
+    "manifestsPlanned": 27
+  },
+  "revalidation": {
+    "diagnosticPlumbing": true,
+    "validated": {
+      "status": "validated",
+      "artifactId": "mock-artifact-pass",
+      "measured": 50,
+      "searchedHiddenSet": false
+    },
+    "failed": {
+      "status": "failed",
+      "artifactId": "mock-artifact-regressed",
+      "measured": 120,
+      "fallback": {
+        "id": "mock-artifact-baseline",
+        "note": "predeclared safe fallback reported separately; the failed artifact stays failed"
+      },
+      "searchedHiddenSet": false
+    },
+    "remeasureCalls": [
+      "mock-artifact-pass",
+      "mock-artifact-regressed"
+    ],
+    "measuredPreselectedOnly": true
+  },
+  "mockVsLive": "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY, not passed.",
+  "limitations": [
+    "Frozen-state replay approximates one-step choice quality from cached, materialized outcomes; a fixed representative patch does not prove all implementations of an idea equal, and replay cannot measure long-term exploration value. Mock selector stand-ins verify the analysis plumbing only and support no selector-quality claim. Live trajectories are BLOCKED without TYPESAFE_API_KEY, never passed. Publish failures and null results as well as wins."
+  ],
+  "nextCommand": "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/paired-pilot/run.mjs --mode=live --out evals/paired-pilot/report.live.json"
+}

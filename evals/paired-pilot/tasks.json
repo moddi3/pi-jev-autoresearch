@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "ticket": "15-paired-pilot",
+  "note": "Three inexpensive task families (§11.3), diagnostic scale: 3 trials per arm, 10 post-baseline slots each. At least one task is close to real intended use (pure-transformation reuses the live-smoke dedupe objective). Partition dev tunes; held-out tasks stay separate for the frozen confirmatory run after the policy freeze.",
+  "trialsPerArm": 3,
+  "postBaselineSlots": 10,
+  "tasks": [
+    {
+      "taskId": "pilot-dedupe-transform",
+      "family": "pure-transformation",
+      "partition": "dev",
+      "objective": "Optimize a pure TypeScript transformation (dedupeAndSort) while its fixed input/output behavior stays byte-identical.",
+      "metricName": "runtime_ms",
+      "direction": "lower",
+      "unit": "ms",
+      "benchmarkId": "bench-parse-v3",
+      "checksId": "checks-parse-v3",
+      "correctness": "Golden outputs, edge cases, hidden input distribution. Reuses the live-smoke fixture shape (synthetic marker benchmark proves protocol function, never a performance claim)."
+    },
+    {
+      "taskId": "pilot-bundle-artifact",
+      "family": "build-artifact",
+      "partition": "dev",
+      "objective": "Minimize bundle bytes of a small build artifact while behavior checks, required exports, and dependency constraints hold.",
+      "metricName": "bundle_bytes",
+      "direction": "lower",
+      "unit": "bytes",
+      "benchmarkId": "bench-bundle-v1",
+      "checksId": "checks-bundle-v1",
+      "correctness": "Behavior checks, required exports, dependency constraints. No workload may be skipped or mocked to shrink bytes."
+    },
+    {
+      "taskId": "pilot-test-execution",
+      "family": "test-execution",
+      "partition": "dev",
+      "objective": "Minimize total runtime of a fixed test list doing the same required work.",
+      "metricName": "runtime_ms",
+      "direction": "lower",
+      "unit": "ms",
+      "benchmarkId": "bench-tests-v2",
+      "checksId": "checks-tests-v2",
+      "correctness": "Fixed test list, assertions and pass count. Skipped or mocked workload is a failure, not a speedup."
+    }
+  ],
+  "heldoutNote": "Held-out confirmatory tasks are selected only after the pilot debugs the harness and the question plan, policy, and configuration freeze. They are not listed here so tuning cannot leak into them."
+}

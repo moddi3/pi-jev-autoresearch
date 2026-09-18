@@ -59,6 +59,17 @@ import type { DecisionState } from "./types.ts";
 /** Arms compared by frozen replay. `simple` is the optional deterministic baseline. */
 export const REPLAY_ARMS = ["structured_jev", "structured_llm", "simple"] as const;
 
+/**
+ * Arms a trial manifest may record. The end-to-end pilot (ticket 15) adds
+ * `baseline_upstream` (unmodified upstream behavior; an off-mode parity
+ * substitute only after parity is tested). It is a trajectory arm, never a
+ * replay selector: `runFrozenReplay` still accepts only `REPLAY_ARMS`.
+ */
+export const TRIAL_MANIFEST_ARMS = [...REPLAY_ARMS, "baseline_upstream"] as const;
+
+/** One arm a trial manifest may record. */
+export type TrialManifestArm = (typeof TRIAL_MANIFEST_ARMS)[number];
+
 /** One compared arm. */
 export type ReplayArm = (typeof REPLAY_ARMS)[number];
 
@@ -820,7 +831,7 @@ export type TrialPartition = "dev" | "heldout";
 export interface TrialManifestInput {
   taskId: string;
   partition: TrialPartition;
-  arm: ReplayArm;
+  arm: TrialManifestArm;
   repetition: number;
   startingRevision: string;
   seeds: Record<string, number>;
@@ -841,7 +852,7 @@ export interface TrialManifest {
   manifestVersion: typeof REPLAY_MANIFEST_VERSION;
   taskId: string;
   partition: TrialPartition;
-  arm: ReplayArm;
+  arm: TrialManifestArm;
   repetition: number;
   startingRevision: string;
   seeds: Record<string, number>;
@@ -878,8 +889,8 @@ export function buildTrialManifest(input: TrialManifestInput): TrialManifest {
   if (input.partition !== "dev" && input.partition !== "heldout") {
     manifestError(`partition must be "dev" or "heldout", got ${JSON.stringify(input.partition)}`);
   }
-  if (!REPLAY_ARMS.includes(input.arm)) {
-    manifestError(`arm must be one of [${REPLAY_ARMS.join(", ")}], got ${JSON.stringify(input.arm)}`);
+  if (!TRIAL_MANIFEST_ARMS.includes(input.arm)) {
+    manifestError(`arm must be one of [${TRIAL_MANIFEST_ARMS.join(", ")}], got ${JSON.stringify(input.arm)}`);
   }
   if (!Number.isInteger(input.repetition) || input.repetition < 0) {
     manifestError("repetition must be an integer >= 0");
