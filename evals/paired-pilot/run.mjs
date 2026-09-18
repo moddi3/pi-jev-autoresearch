@@ -261,16 +261,16 @@ export async function runPairedPilot(options = {}) {
       },
     },
     trajectories: {
-      status: transport === "live" ? "LIVE" : "BLOCKED-live",
+      status: transport === "live" ? "PLANNED-live" : "BLOCKED-live",
       note: transport === "live"
-        ? "Live A/B/C trajectories run under the serial schedule with the predeclaration above."
+        ? "Manifests are planned and pairing-validated, but no live trajectory executed: the live trajectory executor is not built yet (see ticket 15 review). The frozen comparison below uses outcome-blind mock stand-ins, never live selector calls."
         : "Live A/B/C trajectories are BLOCKED on TYPESAFE_API_KEY: manifests and the serial schedule are planned and pairing-validated, but no live trajectory ran and no trajectory outcome is claimed.",
       manifestsPlanned: manifests.length,
     },
     revalidation,
     mockVsLive: transport === "mock"
       ? "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY, not passed."
-      : "Live TypeSafe responses recorded; mock stand-ins not used for the live arms.",
+      : "No live TypeSafe calls were made in this report: the frozen comparison uses outcome-blind mock stand-ins (see selectorStandIns), and trajectories are planned-not-executed. Live selector evidence requires the trajectory executor.",
     limitations: [PILOT_LIMITATIONS],
     nextCommand: "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/paired-pilot/run.mjs --mode=live --out evals/paired-pilot/report.live.json",
   };
