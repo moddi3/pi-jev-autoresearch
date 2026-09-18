@@ -1,8 +1,22 @@
-// Paired three-arm pilot runner with frozen comparison (ticket 15).
+// Paired three-arm pilot runner with frozen comparison (ticket 15;
+// honest live gating per ticket 06).
 //
-// Plan source: AGENT_HANDOFF.md §11.3, §11.4, §11.5, §12, §13 (M3).
+// Distinct commands/modes:
+// - `--mode=plan`: build the 27-trial plan, validate pairing fairness, and
+//   record manifests. The report stays explicitly a plan
+//   (`status: "plan"`, `executedMode: "none"`, `outcomeSource: "none"`):
+//   plan validation, never trajectory execution. Exits 0.
+// - `--mode=replay` (alias `--mode=mock`): replay mock selector stand-ins
+//   over the 24 outcome-labeled snapshots to prove the analysis plumbing.
+//   Fixture results live in the separately labeled `diagnostics`
+//   section (`outcomeSource: "fixtures"`); no live call is made. Exits 0.
+// - `--mode=live`: requires TYPESAFE_API_KEY, then reports
+//   `not_implemented` and exits nonzero until the ticket-07 trajectory
+//   executor exists. A key proves intent, never execution: no mock result
+//   is ever reported as live (`executedMode: "none"`,
+//   `completedTrajectories: 0`, `outcomeSource: "none"`).
 //
-// What this proves in mock mode (the only path without TYPESAFE_API_KEY):
+// What the replay path proves (the only automated path):
 // - the 27-trial plan builds (3 tasks x 3 trials x 3 arms x 10 slots),
 //   pairing fairness validates, and manifests record the full context;
 // - the frozen B/C comparison replays mock selector stand-ins over the 24
@@ -14,8 +28,9 @@
 // What this never claims: mock selector picks are plumbing stand-ins, not
 // real Jev/LLM quality evidence. The report carries mockSelectors,
 // diagnosticPlumbing, and noQualityClaim markers. Live A/B/C trajectories
-// are BLOCKED without TYPESAFE_API_KEY (exit 2), never passed, and no
-// benchmark numbers here are performance results.
+// are BLOCKED without TYPESAFE_API_KEY (exit 2) and NOT_IMPLEMENTED with
+// one (exit 2), never passed, and no benchmark numbers here are
+// performance results.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -180,46 +195,96 @@ function demonstrateRevalidationGate() {
   };
 }
 
-export async function runPairedPilot(options = {}) {
-  const mode = options.mode ?? "mock";
-  const gate = pilotLiveGate();
-  if (mode === "live" && !gate.live) {
-    const blocked = new Error(`paired pilot BLOCKED: ${gate.reason}`);
-    blocked.code = "LIVE_BLOCKED";
-    throw blocked;
-  }
-  const transport = mode === "live" ? "live" : "mock";
-  const startedAt = new Date().toISOString();
-  const { forkSha, upstreamSha } = repoShas();
+export const PAIRED_PILOT_MODES = ["plan", "replay", "live"];
+const PILOT_MODE_ALIASES = { mock: "replay" };
 
-  const config = buildConfig(options.orderSeed ?? 11);
-  const plan = buildPilotPlan(config);
-  validatePilotPairing(plan, config);
-  const manifests = buildManifests(plan, config);
+/**
+ * Resolve a requested `--mode` to its execution path. `mock` stays accepted
+ * as an alias of `replay` (fixture replay); anything outside
+ * plan/replay/live fails loudly instead of silently running fixtures.
+ */
+export function normalizePilotMode(raw) {
+  const name = raw ?? "mock";
+  if (Object.hasOwn(PILOT_MODE_ALIASES, name)) return PILOT_MODE_ALIASES[name];
+  if (PAIRED_PILOT_MODES.includes(name)) return name;
+  const error = new Error(
+    `unknown paired-pilot mode ${JSON.stringify(name)}: expected one of ${[...PAIRED_PILOT_MODES, ...Object.keys(PILOT_MODE_ALIASES)].join(", ")}`,
+  );
+  error.code = "UNKNOWN_MODE";
+  throw error;
+}
 
-  const labeled = allLabeledSnapshots();
-  validateLabeledSet(labeled);
-  const frozenComparison = await runFrozenPilotComparison({
-    labeled,
-    jevSelector: firstEligibleStandIn(),
-    llmSelector: lastEligibleStandIn(),
-    direction: "lower",
-  });
-
-  const revalidation = demonstrateRevalidationGate();
-
-  const report = {
+/**
+ * Shared report envelope. `providerCalls` and `completedTrajectories` are
+ * event counts, not measurements: zero calls were made and zero
+ * trajectories completed on every path of this harness until the ticket-07
+ * executor exists. Absent measurements (cost, latency, gains) stay absent
+ * (null/omitted), never zero-filled.
+ */
+function pilotEnvelope({ requestedMode, executedMode, status, transport, outcomeSource, forkSha, upstreamSha, startedAt }) {
+  return {
     version: 1,
     ticket: "15-paired-pilot",
+    requestedMode,
+    executedMode,
+    status,
     transport,
     model: PAIRED_PILOT_MODEL,
     forkSha,
     upstreamSha,
     startedAt,
     finishedAt: new Date().toISOString(),
-    live: transport === "live"
-      ? { status: "LIVE", reason: gate.reason }
-      : { status: "BLOCKED", reason: gate.reason },
+    providerCalls: { pi: 0, jev: 0 },
+    completedTrajectories: 0,
+    outcomeSource,
+  };
+}
+
+export async function runPairedPilot(options = {}) {
+  const requestedMode = options.mode ?? "mock";
+  const mode = normalizePilotMode(requestedMode);
+  const startedAt = new Date().toISOString();
+  const { forkSha, upstreamSha } = repoShas();
+
+  if (mode === "live") {
+    const gate = pilotLiveGate();
+    if (!gate.live) {
+      const blocked = new Error(`paired pilot BLOCKED: ${gate.reason}`);
+      blocked.code = "LIVE_BLOCKED";
+      throw blocked;
+    }
+    // The key proves intent, never execution: no trajectory executor exists
+    // yet (ticket 07-real-executor-pilot), so a requested live run fails
+    // loudly instead of reporting mock plumbing as a live comparison.
+    const report = {
+      ...pilotEnvelope({
+        requestedMode, executedMode: "none", status: "not_implemented",
+        transport: "none", outcomeSource: "none", forkSha, upstreamSha, startedAt,
+      }),
+      live: {
+        status: "NOT_IMPLEMENTED",
+        reason: "TYPESAFE_API_KEY is present but the live trajectory executor is not built yet (see ticket 07-real-executor-pilot); no provider call was made and no trajectory ran",
+      },
+      milestone: "live execution requested but not implemented: plan validation and fixture replay are the only available modes",
+      executor: "unimplemented",
+      limitations: [PILOT_LIMITATIONS],
+      nextCommand: "node --experimental-strip-types evals/paired-pilot/run.mjs --mode=replay --out evals/paired-pilot/report.replay.json  # fixture replay only; live execution lands with ticket 07",
+    };
+    if (options.reportPath) await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    const unimplemented = new Error(
+      "paired pilot live execution is not implemented (ticket 07-real-executor-pilot): no provider call was made and no trajectory ran",
+    );
+    unimplemented.code = "LIVE_NOT_IMPLEMENTED";
+    unimplemented.report = report;
+    throw unimplemented;
+  }
+
+  const config = buildConfig(options.orderSeed ?? 11);
+  const plan = buildPilotPlan(config);
+  validatePilotPairing(plan, config);
+  const manifests = buildManifests(plan, config);
+
+  const shared = {
     predeclaration: {
       primaryBudgetBasis: PRIMARY_BUDGET_BASIS,
       smallestUsefulEffect: { ...SMALLEST_USEFUL_EFFECT },
@@ -252,27 +317,82 @@ export async function runPairedPilot(options = {}) {
       hashes: manifests.map((m) => ({ taskId: m.taskId, arm: m.arm, repetition: m.repetition, hash: hashTrialManifest(m) })),
       records: manifests,
     },
-    frozenComparison: {
-      ...frozenComparison,
-      direction: "lower",
-      selectorStandIns: {
-        structured_jev: "mock first-eligible (outcome-blind)",
-        structured_llm: "mock last-eligible (outcome-blind)",
+    limitations: [PILOT_LIMITATIONS],
+  };
+
+  if (mode === "plan") {
+    const report = {
+      ...pilotEnvelope({
+        requestedMode, executedMode: "none", status: "plan",
+        transport: "none", outcomeSource: "none", forkSha, upstreamSha, startedAt,
+      }),
+      live: {
+        status: "BLOCKED",
+        reason: "plan mode performs no execution: manifests are planned and pairing-validated, but no trajectory ran and no trajectory outcome is claimed",
       },
+      ...shared,
+      trajectories: {
+        status: "PLANNED-not-executed",
+        note: "Plan mode only: manifests are planned and pairing-validated, but no trajectory ran and no trajectory outcome is claimed. The live trajectory executor is not built yet (see ticket 07-real-executor-pilot).",
+        manifestsPlanned: manifests.length,
+      },
+      milestone: "plan validated (27 manifests pairing-checked); no trajectory executed — execution requires the ticket-07 executor",
+      nextCommand: "node --experimental-strip-types evals/paired-pilot/run.mjs --mode=replay --out evals/paired-pilot/report.replay.json  # fixture replay only; live execution lands with ticket 07",
+    };
+    if (options.reportPath) await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    return report;
+  }
+
+  // mode === "replay": fixture replay over outcome-labeled snapshots with
+  // mock selector stand-ins. Diagnostic plumbing only: proves the analysis
+  // path runs end to end, supports no selector-quality claim.
+  const gate = pilotLiveGate();
+  const labeled = allLabeledSnapshots();
+  validateLabeledSet(labeled);
+  const frozenComparison = await runFrozenPilotComparison({
+    labeled,
+    jevSelector: firstEligibleStandIn(),
+    llmSelector: lastEligibleStandIn(),
+    direction: "lower",
+  });
+
+  const revalidation = demonstrateRevalidationGate();
+
+  const report = {
+    ...pilotEnvelope({
+      requestedMode, executedMode: "fixture-replay", status: "diagnostic-complete",
+      transport: "mock", outcomeSource: "fixtures", forkSha, upstreamSha, startedAt,
+    }),
+    live: {
+      status: "BLOCKED",
+      reason: gate.live
+        ? "replay mode never executes live trajectories even with TYPESAFE_API_KEY set: fixture stand-ins only (requested live execution is not implemented yet, see ticket 07)"
+        : gate.reason,
     },
+    ...shared,
     trajectories: {
-      status: transport === "live" ? "PLANNED-live" : "BLOCKED-live",
-      note: transport === "live"
-        ? "Manifests are planned and pairing-validated, but no live trajectory executed: the live trajectory executor is not built yet (see ticket 15 review). The frozen comparison below uses outcome-blind mock stand-ins, never live selector calls."
-        : "Live A/B/C trajectories are BLOCKED on TYPESAFE_API_KEY: manifests and the serial schedule are planned and pairing-validated, but no live trajectory ran and no trajectory outcome is claimed.",
+      status: "BLOCKED-live",
+      note: "Live A/B/C trajectories are BLOCKED on TYPESAFE_API_KEY: manifests and the serial schedule are planned and pairing-validated, but no live trajectory ran and no trajectory outcome is claimed.",
       manifestsPlanned: manifests.length,
     },
-    revalidation,
-    mockVsLive: transport === "mock"
-      ? "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY, not passed."
-      : "No live TypeSafe calls were made in this report: the frozen comparison uses outcome-blind mock stand-ins (see selectorStandIns), and trajectories are planned-not-executed. Live selector evidence requires the trajectory executor.",
-    limitations: [PILOT_LIMITATIONS],
-    nextCommand: "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/paired-pilot/run.mjs --mode=live --out evals/paired-pilot/report.live.json",
+    diagnostics: {
+      label: "fixture-replay",
+      note: "Everything under fixtureReplay used outcome-blind mock selector stand-ins over cached outcomes. It verifies the analysis plumbing; it is not live evidence and supports no selector-quality claim.",
+      fixtureReplay: {
+        frozenComparison: {
+          ...frozenComparison,
+          direction: "lower",
+          selectorStandIns: {
+            structured_jev: "mock first-eligible (outcome-blind)",
+            structured_llm: "mock last-eligible (outcome-blind)",
+          },
+        },
+        revalidation,
+        mockVsLive: "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY and live execution is NOT_IMPLEMENTED until the ticket-07 executor exists.",
+      },
+    },
+    milestone: "fixture replay complete as a diagnostic: analysis plumbing verified, no live trajectory executed",
+    nextCommand: "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/paired-pilot/run.mjs --mode=live --out evals/paired-pilot/report.live.json  # currently exits 2 NOT_IMPLEMENTED: the live executor lands with ticket 07",
   };
   if (options.reportPath) await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`);
   return report;
@@ -280,7 +400,8 @@ export async function runPairedPilot(options = {}) {
 
 // ---------------------------------------------------------------------------
 // CLI: `node --experimental-strip-types evals/paired-pilot/run.mjs
-//        [--mode=mock|live] [--out <path>] [--order-seed <n>]`
+//        [--mode=plan|replay|live] [--out <path>] [--order-seed <n>]`
+// (`--mode=mock` stays accepted as an alias of `replay`.)
 // ---------------------------------------------------------------------------
 
 const invokedDirectly = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
@@ -296,7 +417,14 @@ if (invokedDirectly) {
   const mode = option("--mode", "mock");
   const out = option("--out", null);
   const orderSeed = Number(option("--order-seed", "11"));
-  if (mode === "live") {
+  let normalized;
+  try {
+    normalized = normalizePilotMode(mode);
+  } catch (error) {
+    console.log(JSON.stringify({ status: "error", reason: error.message }, null, 2));
+    process.exit(1);
+  }
+  if (normalized === "live") {
     const gate = pilotLiveGate();
     if (!gate.live) {
       console.log(JSON.stringify({ status: "BLOCKED", reason: gate.reason, transport: "mock" }, null, 2));
@@ -309,6 +437,10 @@ if (invokedDirectly) {
   } catch (error) {
     if (error?.code === "LIVE_BLOCKED") {
       console.log(JSON.stringify({ status: "BLOCKED", reason: error.message, transport: "mock" }, null, 2));
+      process.exit(2);
+    }
+    if (error?.code === "LIVE_NOT_IMPLEMENTED") {
+      console.log(JSON.stringify(error.report, null, 2));
       process.exit(2);
     }
     console.error(error?.stack ?? String(error));

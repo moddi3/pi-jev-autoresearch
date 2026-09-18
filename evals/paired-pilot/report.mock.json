@@ -1,12 +1,21 @@
 {
   "version": 1,
   "ticket": "15-paired-pilot",
+  "requestedMode": "mock",
+  "executedMode": "fixture-replay",
+  "status": "diagnostic-complete",
   "transport": "mock",
   "model": "jev-1.13.0",
-  "forkSha": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+  "forkSha": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
   "upstreamSha": "939ede8220daad440eac6bb7b6e315cc283e0a64",
-  "startedAt": "2026-09-18T15:14:04.594Z",
-  "finishedAt": "2026-09-18T15:14:04.629Z",
+  "startedAt": "2026-09-18T17:41:22.535Z",
+  "finishedAt": "2026-09-18T17:41:22.563Z",
+  "providerCalls": {
+    "pi": 0,
+    "jev": 0
+  },
+  "completedTrajectories": 0,
+  "outcomeSource": "fixtures",
   "live": {
     "status": "BLOCKED",
     "reason": "TYPESAFE_API_KEY is absent: live pilot is BLOCKED; mock-backed frozen comparison only"
@@ -149,163 +158,163 @@
         "taskId": "pilot-dedupe-transform",
         "arm": "structured_jev",
         "repetition": 0,
-        "hash": "c1e52be005690da502b56496b8873d0adff264e0cc46d64468ab56049c1da3e5"
+        "hash": "903fd1bd81ffe3c0649598ef58a325419837a196cd7e5da438a8bbb8d8db2ae2"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "structured_llm",
         "repetition": 0,
-        "hash": "80a2a4eeea73ed8db6685f80cc28ddc227aa1431838826e49e3f11f075f3e40f"
+        "hash": "53b3512213bc6b29b1baa8e480088ccaf51d319ea12fbce7a14198ff853eb2d5"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "baseline_upstream",
         "repetition": 0,
-        "hash": "8529118c5d2767740d7c93216a1f89fa370953ee44d234f11007efd611b41e3f"
+        "hash": "d766449204bd568bfc5f20ee80aba339fab77857a4654b11bb8ff408285940e8"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "structured_jev",
         "repetition": 1,
-        "hash": "cf9e72f13f335ec2285c016b94a0df27fbbbe507ce74f0321c0ef894ba3ffb1a"
+        "hash": "d9ca12dfbd6f88565551cfa9a3bde287849b7ff98913ac32b4ec3365b59e891a"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "structured_llm",
         "repetition": 1,
-        "hash": "ef41d49d0504fffc5dfdb4c6c45e2664a47accde99a751f0fed1f73d1d7d19c2"
+        "hash": "963d671394942d8971183f630efb8c444b842cf2f7a4afecb0fe910df0de3e15"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "baseline_upstream",
         "repetition": 1,
-        "hash": "70a64f93afb93f3598f2c07a63b7c0be056d5b439dfe183215222a791b164809"
+        "hash": "df96d4173a43001309c757e0fb5348bcaa3c25ddf5a93c6abfd922a392682a17"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "structured_llm",
         "repetition": 2,
-        "hash": "f56c70795bfbc60839008896549ac4b578b78b68291a7d131b8794677100e1c0"
+        "hash": "296433054ccb2b1fc4e2dce5a367c543194587ed412608243dca4809f71e9647"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "structured_jev",
         "repetition": 2,
-        "hash": "495498db27484601f2ee7fd387137e95f57ff6e32a866cb40c49acaab787b293"
+        "hash": "4f05ca27502dae90fff2ab4b1800a7628c277dbc5c15ef32c61187d52758c5c7"
       },
       {
         "taskId": "pilot-dedupe-transform",
         "arm": "baseline_upstream",
         "repetition": 2,
-        "hash": "de83a5b5a3c3b2833212fc6837989ad911b22b6666c4d74d0f1ed9f41c05a129"
+        "hash": "d2cd90e40ac937f82bc2a594495b7a4c5187ea3bde0ac15458220816d1859892"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "structured_jev",
         "repetition": 0,
-        "hash": "dfd7f97fc41227d3d1d99427a49d16947ec7a1fd447cb79fd9e08678a54adfad"
+        "hash": "fe141405d1e80d49f305505fdc1d516fedec969b5fb03a156f6b5ca45c8dab35"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "structured_llm",
         "repetition": 0,
-        "hash": "19bd337b93ac5f6e98b3fb83e6e19e01fa44687f2139f3f4ff43cea029e93e6c"
+        "hash": "a304183030ac11c5b9aa8f0044f9c9ed5c627c5e4719c9ece8b8b90cb4cf29e8"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "baseline_upstream",
         "repetition": 0,
-        "hash": "98fdf58e4230aed9478870c61c376e4db03a81c43688424153646b21ab0150a8"
+        "hash": "da2f0611d16af4913c22487ae44ec18fa0abcdb36958aa72e3fef954461fde29"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "structured_llm",
         "repetition": 1,
-        "hash": "82132a97479d81c9a6e5db105ca9ec4977de585f92159e17839b984dabbe1286"
+        "hash": "56344962d4201f8d664ae1b4b359759054ac8c157be55ace96e1ed5391ac43a1"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "structured_jev",
         "repetition": 1,
-        "hash": "09ecd1077b55de157018add3cda8bee611429183696cf23db647e0a07cf269bc"
+        "hash": "2aa22b9509f2ae4504564eb379bacf424e65e7153f2b40c68c45d29d967ab302"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "baseline_upstream",
         "repetition": 1,
-        "hash": "ab5a77e00cf4644cf565fbe12206cb6b6f93c5c78cb00a96dfbbfc0d1a65c5e2"
+        "hash": "bb83951a601c4f3f9bb1464db76f8a0de336d22418aa1f172b03d9b061873bac"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "structured_jev",
         "repetition": 2,
-        "hash": "530026c79494e09d57b4f7f332fb9ac6c130737aec704fd65cb2d17787c0f68f"
+        "hash": "802669e357ed9fbb5da42bf66f0ca646f13ca854bb5247dba16085fd3a6969f9"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "baseline_upstream",
         "repetition": 2,
-        "hash": "6b6437d07a01f6054042d9a67937635a9b4997d9c07963dd0c2255fd37bbd6d7"
+        "hash": "05575b6bb2f795cac93a0330742f1aff045028c66de553ccf5f1e62f1c4b8fa5"
       },
       {
         "taskId": "pilot-bundle-artifact",
         "arm": "structured_llm",
         "repetition": 2,
-        "hash": "e560214df527ff03f58d69fd6269cd2eee9dc82775a2f00ae6efd12a6aacaaea"
+        "hash": "c0624c162ddba79e35ac90f8376e803c4f84ac352d6ac79227ab2217f72ccc07"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "baseline_upstream",
         "repetition": 0,
-        "hash": "7bd9032360bac30aaa37c0f9cea36dec03b8748b7af249cbf9c19a578e676e2f"
+        "hash": "87c1c481ac03ef40de779fef8a9c327aa94374174461fcff9df571b21d91bd07"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "structured_llm",
         "repetition": 0,
-        "hash": "0fbb5dd04d574fe6093d2af3ab31b826c69faac46804a8dcb132f4894b76a032"
+        "hash": "37e13cd33a970d4fa43fd4b6483c0c08d9e43fd6df172bbf60f8118d105baeda"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "structured_jev",
         "repetition": 0,
-        "hash": "cdd0fca23931d3cbb3dff4ccdf8c072076232949c74785bcd558c329e4f6c05d"
+        "hash": "20778cf086c052c63d7e7fcffb9b28508073f0ad2224177422f97a7487f88b6b"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "structured_jev",
         "repetition": 1,
-        "hash": "295f7c6d90ca8689de4c7e23716b01941da1d4c4a754b264ac91a300b400f30b"
+        "hash": "19842adf1106006c8c49374ca695fd5755c24e3f6212a7c2e34c037775ea6fd0"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "structured_llm",
         "repetition": 1,
-        "hash": "75cee966b3fa272d459d391bed87e3527025cae700bd563b2b6707f889c93a72"
+        "hash": "a52d4c09859e92c131bfd02778108fb78f7259f8c84addf8c0ee3841d3f044c1"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "baseline_upstream",
         "repetition": 1,
-        "hash": "60a4864964c3cdbc494c51dcba3601b80f07923b82f43ff555873199298235b3"
+        "hash": "8ca50febb23396e3e8f8e54985162b06a015fe2687741f55fa0c3676388a1f79"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "structured_llm",
         "repetition": 2,
-        "hash": "ca2dcc2498c7c295fff0ec028227d7284f9a84fd7a0df290e423bef16b764960"
+        "hash": "63874216f2bffccbc9fc098499974aed1288de7021005c3854ae56960afdab33"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "structured_jev",
         "repetition": 2,
-        "hash": "b55b1adb3be2eb3865e451dd50e73675558b1ec2eef8927933e7b280f284c272"
+        "hash": "60c619f671e9b50531fe87e98152d0a7e13175b30181048c3c85a075fb3a229a"
       },
       {
         "taskId": "pilot-test-execution",
         "arm": "baseline_upstream",
         "repetition": 2,
-        "hash": "056d24304e2085595926e1bd47afb0d898869255e0cb6a1bbf71b50d5ddd381b"
+        "hash": "283da49574614a1f28ac0433898c923497bceab56ec4b39b1d42ea6fda5b5dbd"
       }
     ],
     "records": [
@@ -315,7 +324,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -343,7 +352,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.621Z"
+        "createdAt": "2026-09-18T17:41:22.556Z"
       },
       {
         "manifestVersion": 1,
@@ -351,7 +360,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -379,7 +388,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.556Z"
       },
       {
         "manifestVersion": 1,
@@ -387,7 +396,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -415,7 +424,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -423,7 +432,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -451,7 +460,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -459,7 +468,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -487,7 +496,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -495,7 +504,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -523,7 +532,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -531,7 +540,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -559,7 +568,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -567,7 +576,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -595,7 +604,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -603,7 +612,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -631,7 +640,7 @@
         },
         "benchmarkId": "bench-parse-v3",
         "checksId": "checks-parse-v3",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -639,7 +648,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -667,7 +676,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -675,7 +684,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -703,7 +712,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -711,7 +720,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -739,7 +748,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -747,7 +756,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -775,7 +784,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -783,7 +792,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -811,7 +820,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -819,7 +828,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -847,7 +856,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -855,7 +864,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -883,7 +892,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -891,7 +900,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -919,7 +928,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -927,7 +936,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -955,7 +964,7 @@
         },
         "benchmarkId": "bench-bundle-v1",
         "checksId": "checks-bundle-v1",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -963,7 +972,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -991,7 +1000,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -999,7 +1008,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1027,7 +1036,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1035,7 +1044,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 0,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1063,7 +1072,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1071,7 +1080,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1099,7 +1108,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1107,7 +1116,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1135,7 +1144,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1143,7 +1152,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 1,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1171,7 +1180,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1179,7 +1188,7 @@
         "partition": "dev",
         "arm": "structured_llm",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1207,7 +1216,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1215,7 +1224,7 @@
         "partition": "dev",
         "arm": "structured_jev",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1243,7 +1252,7 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       },
       {
         "manifestVersion": 1,
@@ -1251,7 +1260,7 @@
         "partition": "dev",
         "arm": "baseline_upstream",
         "repetition": 2,
-        "startingRevision": "8cd2a85a7671cdb93154879e9daeeed25f5461f8",
+        "startingRevision": "44d2e1cf5aa85d180737abd65a84595ed857a99d",
         "seeds": {
           "workload": 42,
           "order": 11
@@ -1279,247 +1288,254 @@
         },
         "benchmarkId": "bench-tests-v2",
         "checksId": "checks-tests-v2",
-        "createdAt": "2026-09-18T15:14:04.622Z"
+        "createdAt": "2026-09-18T17:41:22.557Z"
       }
     ]
   },
-  "frozenComparison": {
-    "snapshots": 24,
-    "perSnapshot": [
-      {
-        "snapshotId": "labeled-success-01",
-        "family": "success",
-        "gainJev": 0.37,
-        "gainLlm": 0.04,
-        "diffCB": 0.33
-      },
-      {
-        "snapshotId": "labeled-success-02",
-        "family": "success",
-        "gainJev": 0.36,
-        "gainLlm": 0.04,
-        "diffCB": 0.32
-      },
-      {
-        "snapshotId": "labeled-success-03",
-        "family": "success",
-        "gainJev": 0.35,
-        "gainLlm": 0.04,
-        "diffCB": 0.31
-      },
-      {
-        "snapshotId": "labeled-success-04",
-        "family": "success",
-        "gainJev": 0.34,
-        "gainLlm": 0.04,
-        "diffCB": 0.30000000000000004
-      },
-      {
-        "snapshotId": "labeled-success-05",
-        "family": "success",
-        "gainJev": 0.33,
-        "gainLlm": 0.04,
-        "diffCB": 0.29000000000000004
-      },
-      {
-        "snapshotId": "labeled-success-06",
-        "family": "success",
-        "gainJev": 0.32,
-        "gainLlm": 0.04,
-        "diffCB": 0.28
-      },
-      {
-        "snapshotId": "labeled-failure-01",
-        "family": "failure",
-        "gainJev": null,
-        "gainLlm": 0.03,
-        "diffCB": null
-      },
-      {
-        "snapshotId": "labeled-failure-02",
-        "family": "failure",
-        "gainJev": null,
-        "gainLlm": null,
-        "diffCB": null
-      },
-      {
-        "snapshotId": "labeled-failure-03",
-        "family": "failure",
-        "gainJev": null,
-        "gainLlm": 0.03,
-        "diffCB": null
-      },
-      {
-        "snapshotId": "labeled-failure-04",
-        "family": "failure",
-        "gainJev": null,
-        "gainLlm": null,
-        "diffCB": null
-      },
-      {
-        "snapshotId": "labeled-failure-05",
-        "family": "failure",
-        "gainJev": null,
-        "gainLlm": 0.03,
-        "diffCB": null
-      },
-      {
-        "snapshotId": "labeled-failure-06",
-        "family": "failure",
-        "gainJev": null,
-        "gainLlm": null,
-        "diffCB": null
-      },
-      {
-        "snapshotId": "labeled-plateau-01",
-        "family": "plateau",
-        "gainJev": 0.135,
-        "gainLlm": 0.12400000000000005,
-        "diffCB": 0.010999999999999954
-      },
-      {
-        "snapshotId": "labeled-plateau-02",
-        "family": "plateau",
-        "gainJev": 0.13,
-        "gainLlm": 0.11900000000000005,
-        "diffCB": 0.010999999999999954
-      },
-      {
-        "snapshotId": "labeled-plateau-03",
-        "family": "plateau",
-        "gainJev": 0.14,
-        "gainLlm": 0.12900000000000006,
-        "diffCB": 0.010999999999999954
-      },
-      {
-        "snapshotId": "labeled-plateau-04",
-        "family": "plateau",
-        "gainJev": 0.135,
-        "gainLlm": 0.12400000000000005,
-        "diffCB": 0.010999999999999954
-      },
-      {
-        "snapshotId": "labeled-plateau-05",
-        "family": "plateau",
-        "gainJev": 0.13,
-        "gainLlm": 0.11900000000000005,
-        "diffCB": 0.010999999999999954
-      },
-      {
-        "snapshotId": "labeled-plateau-06",
-        "family": "plateau",
-        "gainJev": 0.14,
-        "gainLlm": 0.12900000000000006,
-        "diffCB": 0.010999999999999954
-      },
-      {
-        "snapshotId": "labeled-insufficient-01",
-        "family": "insufficient-evidence",
-        "gainJev": 0.21,
-        "gainLlm": 0.05,
-        "diffCB": 0.15999999999999998
-      },
-      {
-        "snapshotId": "labeled-insufficient-02",
-        "family": "insufficient-evidence",
-        "gainJev": 0.2,
-        "gainLlm": 0.06,
-        "diffCB": 0.14
-      },
-      {
-        "snapshotId": "labeled-insufficient-03",
-        "family": "insufficient-evidence",
-        "gainJev": 0.19,
-        "gainLlm": 0.07,
-        "diffCB": 0.12
-      },
-      {
-        "snapshotId": "labeled-insufficient-04",
-        "family": "insufficient-evidence",
-        "gainJev": 0.18,
-        "gainLlm": 0.08,
-        "diffCB": 0.09999999999999999
-      },
-      {
-        "snapshotId": "labeled-insufficient-05",
-        "family": "insufficient-evidence",
-        "gainJev": 0.17,
-        "gainLlm": 0.09,
-        "diffCB": 0.08000000000000002
-      },
-      {
-        "snapshotId": "labeled-insufficient-06",
-        "family": "insufficient-evidence",
-        "gainJev": 0.16,
-        "gainLlm": 0.1,
-        "diffCB": 0.06
-      }
-    ],
-    "pairedCB": {
-      "mean": 0.14200000000000002,
-      "ci": {
-        "mean": 0.14200000000000002,
-        "lo": 0.010999999999999954,
-        "hi": 0.3022222222222223,
-        "resamples": 2000
-      },
-      "pairs": 18
-    },
-    "armMetrics": {
-      "structured_jev": {
-        "meanUtility": null,
-        "meanRegretVsBest": 0,
-        "snapshots": 24
-      },
-      "structured_llm": {
-        "meanUtility": null,
-        "meanRegretVsBest": 12.171428571428569,
-        "snapshots": 24
-      }
-    },
-    "mockSelectors": true,
-    "diagnosticPlumbing": true,
-    "noQualityClaim": true,
-    "uncertaintyPreliminary": true,
-    "limitations": "Frozen-state replay approximates one-step choice quality from cached, materialized outcomes; a fixed representative patch does not prove all implementations of an idea equal, and replay cannot measure long-term exploration value. Mock selector stand-ins verify the analysis plumbing only and support no selector-quality claim. Live trajectories are BLOCKED without TYPESAFE_API_KEY, never passed. Publish failures and null results as well as wins.",
-    "direction": "lower",
-    "selectorStandIns": {
-      "structured_jev": "mock first-eligible (outcome-blind)",
-      "structured_llm": "mock last-eligible (outcome-blind)"
-    }
-  },
+  "limitations": [
+    "Frozen-state replay approximates one-step choice quality from cached, materialized outcomes; a fixed representative patch does not prove all implementations of an idea equal, and replay cannot measure long-term exploration value. Mock selector stand-ins verify the analysis plumbing only and support no selector-quality claim. Live trajectories are BLOCKED without TYPESAFE_API_KEY, never passed. Publish failures and null results as well as wins."
+  ],
   "trajectories": {
     "status": "BLOCKED-live",
     "note": "Live A/B/C trajectories are BLOCKED on TYPESAFE_API_KEY: manifests and the serial schedule are planned and pairing-validated, but no live trajectory ran and no trajectory outcome is claimed.",
     "manifestsPlanned": 27
   },
-  "revalidation": {
-    "diagnosticPlumbing": true,
-    "validated": {
-      "status": "validated",
-      "artifactId": "mock-artifact-pass",
-      "measured": 50,
-      "searchedHiddenSet": false
-    },
-    "failed": {
-      "status": "failed",
-      "artifactId": "mock-artifact-regressed",
-      "measured": 120,
-      "fallback": {
-        "id": "mock-artifact-baseline",
-        "note": "predeclared safe fallback reported separately; the failed artifact stays failed"
+  "diagnostics": {
+    "label": "fixture-replay",
+    "note": "Everything under fixtureReplay used outcome-blind mock selector stand-ins over cached outcomes. It verifies the analysis plumbing; it is not live evidence and supports no selector-quality claim.",
+    "fixtureReplay": {
+      "frozenComparison": {
+        "snapshots": 24,
+        "perSnapshot": [
+          {
+            "snapshotId": "labeled-success-01",
+            "family": "success",
+            "gainJev": 0.37,
+            "gainLlm": 0.04,
+            "diffCB": 0.33
+          },
+          {
+            "snapshotId": "labeled-success-02",
+            "family": "success",
+            "gainJev": 0.36,
+            "gainLlm": 0.04,
+            "diffCB": 0.32
+          },
+          {
+            "snapshotId": "labeled-success-03",
+            "family": "success",
+            "gainJev": 0.35,
+            "gainLlm": 0.04,
+            "diffCB": 0.31
+          },
+          {
+            "snapshotId": "labeled-success-04",
+            "family": "success",
+            "gainJev": 0.34,
+            "gainLlm": 0.04,
+            "diffCB": 0.30000000000000004
+          },
+          {
+            "snapshotId": "labeled-success-05",
+            "family": "success",
+            "gainJev": 0.33,
+            "gainLlm": 0.04,
+            "diffCB": 0.29000000000000004
+          },
+          {
+            "snapshotId": "labeled-success-06",
+            "family": "success",
+            "gainJev": 0.32,
+            "gainLlm": 0.04,
+            "diffCB": 0.28
+          },
+          {
+            "snapshotId": "labeled-failure-01",
+            "family": "failure",
+            "gainJev": null,
+            "gainLlm": 0.03,
+            "diffCB": null
+          },
+          {
+            "snapshotId": "labeled-failure-02",
+            "family": "failure",
+            "gainJev": null,
+            "gainLlm": null,
+            "diffCB": null
+          },
+          {
+            "snapshotId": "labeled-failure-03",
+            "family": "failure",
+            "gainJev": null,
+            "gainLlm": 0.03,
+            "diffCB": null
+          },
+          {
+            "snapshotId": "labeled-failure-04",
+            "family": "failure",
+            "gainJev": null,
+            "gainLlm": null,
+            "diffCB": null
+          },
+          {
+            "snapshotId": "labeled-failure-05",
+            "family": "failure",
+            "gainJev": null,
+            "gainLlm": 0.03,
+            "diffCB": null
+          },
+          {
+            "snapshotId": "labeled-failure-06",
+            "family": "failure",
+            "gainJev": null,
+            "gainLlm": null,
+            "diffCB": null
+          },
+          {
+            "snapshotId": "labeled-plateau-01",
+            "family": "plateau",
+            "gainJev": 0.135,
+            "gainLlm": 0.12400000000000005,
+            "diffCB": 0.010999999999999954
+          },
+          {
+            "snapshotId": "labeled-plateau-02",
+            "family": "plateau",
+            "gainJev": 0.13,
+            "gainLlm": 0.11900000000000005,
+            "diffCB": 0.010999999999999954
+          },
+          {
+            "snapshotId": "labeled-plateau-03",
+            "family": "plateau",
+            "gainJev": 0.14,
+            "gainLlm": 0.12900000000000006,
+            "diffCB": 0.010999999999999954
+          },
+          {
+            "snapshotId": "labeled-plateau-04",
+            "family": "plateau",
+            "gainJev": 0.135,
+            "gainLlm": 0.12400000000000005,
+            "diffCB": 0.010999999999999954
+          },
+          {
+            "snapshotId": "labeled-plateau-05",
+            "family": "plateau",
+            "gainJev": 0.13,
+            "gainLlm": 0.11900000000000005,
+            "diffCB": 0.010999999999999954
+          },
+          {
+            "snapshotId": "labeled-plateau-06",
+            "family": "plateau",
+            "gainJev": 0.14,
+            "gainLlm": 0.12900000000000006,
+            "diffCB": 0.010999999999999954
+          },
+          {
+            "snapshotId": "labeled-insufficient-01",
+            "family": "insufficient-evidence",
+            "gainJev": 0.21,
+            "gainLlm": 0.05,
+            "diffCB": 0.15999999999999998
+          },
+          {
+            "snapshotId": "labeled-insufficient-02",
+            "family": "insufficient-evidence",
+            "gainJev": 0.2,
+            "gainLlm": 0.06,
+            "diffCB": 0.14
+          },
+          {
+            "snapshotId": "labeled-insufficient-03",
+            "family": "insufficient-evidence",
+            "gainJev": 0.19,
+            "gainLlm": 0.07,
+            "diffCB": 0.12
+          },
+          {
+            "snapshotId": "labeled-insufficient-04",
+            "family": "insufficient-evidence",
+            "gainJev": 0.18,
+            "gainLlm": 0.08,
+            "diffCB": 0.09999999999999999
+          },
+          {
+            "snapshotId": "labeled-insufficient-05",
+            "family": "insufficient-evidence",
+            "gainJev": 0.17,
+            "gainLlm": 0.09,
+            "diffCB": 0.08000000000000002
+          },
+          {
+            "snapshotId": "labeled-insufficient-06",
+            "family": "insufficient-evidence",
+            "gainJev": 0.16,
+            "gainLlm": 0.1,
+            "diffCB": 0.06
+          }
+        ],
+        "pairedCB": {
+          "mean": 0.14200000000000002,
+          "ci": {
+            "mean": 0.14200000000000002,
+            "lo": 0.010999999999999954,
+            "hi": 0.3022222222222223,
+            "resamples": 2000
+          },
+          "pairs": 18
+        },
+        "armMetrics": {
+          "structured_jev": {
+            "meanUtility": null,
+            "meanRegretVsBest": 0,
+            "snapshots": 24
+          },
+          "structured_llm": {
+            "meanUtility": null,
+            "meanRegretVsBest": 12.171428571428569,
+            "snapshots": 24
+          }
+        },
+        "mockSelectors": true,
+        "diagnosticPlumbing": true,
+        "noQualityClaim": true,
+        "uncertaintyPreliminary": true,
+        "limitations": "Frozen-state replay approximates one-step choice quality from cached, materialized outcomes; a fixed representative patch does not prove all implementations of an idea equal, and replay cannot measure long-term exploration value. Mock selector stand-ins verify the analysis plumbing only and support no selector-quality claim. Live trajectories are BLOCKED without TYPESAFE_API_KEY, never passed. Publish failures and null results as well as wins.",
+        "direction": "lower",
+        "selectorStandIns": {
+          "structured_jev": "mock first-eligible (outcome-blind)",
+          "structured_llm": "mock last-eligible (outcome-blind)"
+        }
       },
-      "searchedHiddenSet": false
-    },
-    "remeasureCalls": [
-      "mock-artifact-pass",
-      "mock-artifact-regressed"
-    ],
-    "measuredPreselectedOnly": true
+      "revalidation": {
+        "diagnosticPlumbing": true,
+        "validated": {
+          "status": "validated",
+          "artifactId": "mock-artifact-pass",
+          "measured": 50,
+          "searchedHiddenSet": false
+        },
+        "failed": {
+          "status": "failed",
+          "artifactId": "mock-artifact-regressed",
+          "measured": 120,
+          "fallback": {
+            "id": "mock-artifact-baseline",
+            "note": "predeclared safe fallback reported separately; the failed artifact stays failed"
+          },
+          "searchedHiddenSet": false
+        },
+        "remeasureCalls": [
+          "mock-artifact-pass",
+          "mock-artifact-regressed"
+        ],
+        "measuredPreselectedOnly": true
+      },
+      "mockVsLive": "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY and live execution is NOT_IMPLEMENTED until the ticket-07 executor exists."
+    }
   },
-  "mockVsLive": "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY, not passed.",
-  "limitations": [
-    "Frozen-state replay approximates one-step choice quality from cached, materialized outcomes; a fixed representative patch does not prove all implementations of an idea equal, and replay cannot measure long-term exploration value. Mock selector stand-ins verify the analysis plumbing only and support no selector-quality claim. Live trajectories are BLOCKED without TYPESAFE_API_KEY, never passed. Publish failures and null results as well as wins."
-  ],
-  "nextCommand": "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/paired-pilot/run.mjs --mode=live --out evals/paired-pilot/report.live.json"
+  "milestone": "fixture replay complete as a diagnostic: analysis plumbing verified, no live trajectory executed",
+  "nextCommand": "TYPESAFE_API_KEY=<key> node --experimental-strip-types evals/paired-pilot/run.mjs --mode=live --out evals/paired-pilot/report.live.json  # currently exits 2 NOT_IMPLEMENTED: the live executor lands with ticket 07"
 }

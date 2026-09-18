@@ -309,6 +309,12 @@ const PAIRED_PILOT_RUN = fileURLToPath(new URL("../evals/paired-pilot/run.mjs", 
 
 test("mock pilot runner: planned manifests, frozen comparison, BLOCKED live, no quality claim", async () => {
   const report = await runPairedPilot({ mode: "mock" });
+  assert.equal(report.requestedMode, "mock");
+  assert.equal(report.executedMode, "fixture-replay");
+  assert.equal(report.status, "diagnostic-complete");
+  assert.equal(report.outcomeSource, "fixtures");
+  assert.equal(report.completedTrajectories, 0);
+  assert.deepEqual(report.providerCalls, { pi: 0, jev: 0 });
   assert.equal(report.transport, "mock");
   assert.equal(report.live.status, "BLOCKED");
   assert.equal(report.plan.entries, 27);
@@ -320,14 +326,16 @@ test("mock pilot runner: planned manifests, frozen comparison, BLOCKED live, no 
     assert.equal(manifest.manifestVersion, 1);
     assert.match(manifest.promptHash ?? "", /^[0-9a-f]{64}$/);
   }
-  assert.equal(report.frozenComparison.snapshots, 24);
-  assert.equal(report.frozenComparison.mockSelectors, true);
-  assert.equal(report.frozenComparison.diagnosticPlumbing, true);
-  assert.equal(report.frozenComparison.noQualityClaim, true);
+  assert.equal(report.diagnostics.label, "fixture-replay");
+  const replay = report.diagnostics.fixtureReplay;
+  assert.equal(replay.frozenComparison.snapshots, 24);
+  assert.equal(replay.frozenComparison.mockSelectors, true);
+  assert.equal(replay.frozenComparison.diagnosticPlumbing, true);
+  assert.equal(replay.frozenComparison.noQualityClaim, true);
   assert.equal(report.trajectories.status, "BLOCKED-live");
-  assert.equal(report.revalidation.validated.status, "validated");
-  assert.equal(report.revalidation.failed.status, "failed");
-  assert.equal(report.revalidation.measuredPreselectedOnly, true);
+  assert.equal(replay.revalidation.validated.status, "validated");
+  assert.equal(replay.revalidation.failed.status, "failed");
+  assert.equal(replay.revalidation.measuredPreselectedOnly, true);
   assert.equal(report.predeclaration.primaryBudgetBasis, "money");
   assert.ok(report.predeclaration.smallestUsefulEffect.normalizedGain > 0);
   assert.equal(report.passed, undefined, "a mock diagnostic must never claim passed");
@@ -344,6 +352,77 @@ test("paired-pilot live CLI without credentials exits BLOCKED, never passed", ()
   assert.equal(report.status, "BLOCKED");
   assert.match(report.reason, /TYPESAFE_API_KEY/);
   assert.equal(report.passed, undefined, "a blocked run must never claim passed");
+});
+
+// --- Ticket 06: honest live gating (no mock-as-live) ---
+
+test("live-mode-no-stub: requested live with a dummy key reports not-implemented, never mock-as-live", async () => {
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = "dummy-test-key";
+  try {
+    await assert.rejects(runPairedPilot({ mode: "live" }), (error) => {
+      assert.equal(error?.code, "LIVE_NOT_IMPLEMENTED");
+      const report = error?.report ?? {};
+      assert.equal(report.requestedMode, "live");
+      assert.equal(report.executedMode, "none");
+      assert.equal(report.status, "not_implemented");
+      assert.deepEqual(report.providerCalls, { pi: 0, jev: 0 });
+      assert.equal(report.completedTrajectories, 0);
+      assert.equal(report.outcomeSource, "none");
+      assert.notEqual(report.transport, "live", "no transport/status field may read as live");
+      assert.equal(report.frozenComparison, undefined, "fixture comparison must never ship as live evidence");
+      assert.equal(report.passed, undefined, "an unimplemented run must never claim passed");
+      return true;
+    });
+  } finally {
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+});
+
+test("paired-pilot live CLI with a dummy key exits nonzero as not-implemented, never mock-as-live", () => {
+  const child = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", PAIRED_PILOT_RUN, "--mode=live"],
+    { encoding: "utf-8", env: { ...process.env, TYPESAFE_API_KEY: "dummy-test-key" } },
+  );
+  assert.notEqual(child.status, 0, "unimplemented live execution must not exit 0");
+  const report = JSON.parse(child.stdout);
+  assert.equal(report.requestedMode, "live");
+  assert.equal(report.executedMode, "none");
+  assert.equal(report.status, "not_implemented");
+  assert.deepEqual(report.providerCalls, { pi: 0, jev: 0 });
+  assert.equal(report.completedTrajectories, 0);
+  assert.equal(report.outcomeSource, "none");
+  assert.notEqual(report.transport, "live", "no transport/status field may read as live");
+  assert.equal(report.passed, undefined, "an unimplemented run must never claim passed");
+});
+
+test("plan mode succeeds as an explicit plan with no trajectory outcomes", async () => {
+  const report = await runPairedPilot({ mode: "plan" });
+  assert.equal(report.requestedMode, "plan");
+  assert.equal(report.executedMode, "none");
+  assert.equal(report.status, "plan");
+  assert.equal(report.outcomeSource, "none");
+  assert.equal(report.completedTrajectories, 0);
+  assert.equal(report.plan.entries, 27);
+  assert.equal(report.frozenComparison, undefined, "planning must not run fixture selectors");
+  assert.match(report.milestone ?? "", /plan/i);
+  assert.equal(report.passed, undefined, "a plan must never claim a comparison passed");
+});
+
+test("replay mode labels fixture results as diagnostics, never live evidence", async () => {
+  const report = await runPairedPilot({ mode: "replay" });
+  assert.equal(report.requestedMode, "replay");
+  assert.equal(report.executedMode, "fixture-replay");
+  assert.equal(report.status, "diagnostic-complete");
+  assert.equal(report.outcomeSource, "fixtures");
+  assert.equal(report.completedTrajectories, 0);
+  assert.notEqual(report.transport, "live", "no transport/status field may read as live");
+  assert.equal(report.diagnostics?.label, "fixture-replay");
+  assert.equal(report.diagnostics?.fixtureReplay?.frozenComparison?.snapshots, 24);
+  assert.equal(report.diagnostics?.fixtureReplay?.frozenComparison?.mockSelectors, true);
+  assert.equal(report.passed, undefined, "a fixture diagnostic must never claim passed");
 });
 function lastEligibleSelector() {
   return {
