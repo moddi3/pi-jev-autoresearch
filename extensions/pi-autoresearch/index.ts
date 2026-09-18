@@ -63,11 +63,18 @@ import {
   SELECT_EXPERIMENT_TOOL,
   buildEvidenceCatalog,
   buildJevProtocolGuidance,
+  completeControllerLog,
   decideToolPreflight,
   executeCancelSelection,
   executeSelectExperiment,
   isJevControllerActive,
+  prepareControllerLog,
+  prepareControllerRun,
+  readChangedTargetPaths,
+  readHeadCommit,
   readSourceRevision,
+  readTargetPatchHash,
+  readUpstreamOutcomeLinks,
   type ExperimentSnapshot,
   type ProposalBooks,
 } from "./controller/tools.ts";
@@ -1525,7 +1532,11 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     try {
       const resolution = loadControllerResolution(ctx.cwd);
       if (isControllerEnabled(resolution)) {
-        getControllerSession(ctx, workDir, resolution.config.maxCancellationsPerSegment).lifecycle.recover();
+        getControllerSession(ctx, workDir, resolution.config.maxCancellationsPerSegment).lifecycle.recover({
+          // Journal plus upstream outcomes: a crash between log_experiment
+          // and the controller outcome append still reconstructs completion.
+          upstreamOutcomes: readUpstreamOutcomeLinks(workDir),
+        });
       } else {
         dropControllerSession(ctx);
       }
@@ -1982,6 +1993,52 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       }
 
       // TODO(/tree): replace compaction-based resume with a checkpoint-per-iteration model.
+      // Jev-mode run linkage (ticket 09, §6.6): post-baseline runs require a
+      // usable pending decision and associate the result with the actual
+      // implemented diff. Baseline establishment is exempt. Upstream
+      // measurement, checks, and keep/discard behavior below are unchanged.
+      let controllerRun: { lifecycle: ControllerLifecycle; decisionId: string; notices: string[] } | null = null;
+      if (runtime.autoresearchMode && isJevControllerActive(ctx.cwd)) {
+        try {
+          const loaded = loadControllerResolution(ctx.cwd);
+          const session = getControllerSession(
+            ctx,
+            workDir,
+            loaded.enabled ? loaded.config.maxCancellationsPerSegment : 2,
+          );
+          const prepared = prepareControllerRun({
+            workDir,
+            lifecycle: session.lifecycle,
+            hasBaseline: currentResults(state.results, state.currentSegment).length > 0,
+            readRevision: () => readSourceRevision(workDir),
+            readChangedPaths: () => readChangedTargetPaths(workDir),
+          });
+          if (prepared) {
+            controllerRun = {
+              lifecycle: session.lifecycle,
+              decisionId: prepared.decisionId,
+              notices: prepared.notices,
+            };
+          }
+        } catch (e) {
+          return {
+            content: [{ type: "text", text: `❌ run_experiment rejected: ${e instanceof Error ? e.message : String(e)}` }],
+            details: {
+              command: params.command,
+              exitCode: null,
+              durationSeconds: 0,
+              passed: false,
+              crashed: true,
+              timedOut: false,
+              tailOutput: "",
+              checksPass: null,
+              checksTimedOut: false,
+              checksOutput: "",
+              checksDuration: 0,
+            } as RunDetails,
+          };
+        }
+      }
       runtime.runningExperiment = { startedAt: Date.now(), command: params.command };
       updateWidget(ctx);
       if (overlayTui) overlayTui.requestRender();
@@ -2186,6 +2243,24 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       // Store checks result for log_experiment gate
       runtime.lastRunChecks = checksPass !== null ? { pass: checksPass, output: checksOutput, duration: checksDuration } : null;
 
+      // Complete the run side of the controller association (ticket 09): the
+      // measured tree — whatever the benchmark actually ran against — is
+      // hashed into the pending decision. A failed append only warns: the
+      // benchmark details stay authoritative and log_experiment retries it.
+      let controllerPatchNote = "";
+      if (controllerRun) {
+        try {
+          const patchHash = readTargetPatchHash(workDir, readChangedTargetPaths(workDir));
+          controllerRun.lifecycle.recordBenchmark(controllerRun.decisionId, patchHash);
+          const suffix = controllerRun.notices.length > 0 ? ` ${controllerRun.notices.join(" ")}` : "";
+          controllerPatchNote = `\n🔗 Controller: decision ${controllerRun.decisionId} · patch ${patchHash.slice(0, 12)}.${suffix}`;
+        } catch (e) {
+          controllerPatchNote =
+            `\n⚠️ Controller association incomplete (${e instanceof Error ? e.message : String(e)}); ` +
+            "the benchmark result above still stands — log_experiment will retry the association.";
+        }
+      }
+
       const passed = benchmarkPassed && (checksPass === null || checksPass);
 
       // Reuse streaming temp file if it exists, otherwise create one for large output
@@ -2295,6 +2370,8 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       if (checksPass === false) {
         text += `\n\n── Checks output (last 80 lines) ──\n${details.checksOutput}`;
       }
+
+      text += controllerPatchNote;
 
       return {
         content: [{ type: "text", text }],
@@ -2504,10 +2581,66 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         }
       }
 
+      // Jev-mode log linkage (ticket 09, §6.6): attach controller-owned
+      // decision identifiers (they win over LLM-supplied copies) and complete
+      // the association only after the runner lifecycle below succeeds. The
+      // keep-when-checks-failed gate above and all keep/discard behavior are
+      // unchanged: Jev never overrides a failing test.
+      let controllerLog: {
+        lifecycle: ControllerLifecycle;
+        decisionId: string;
+        segment: number;
+        epoch: number;
+        patchHash: string;
+        augmentedAsi: Record<string, unknown>;
+        recoveredAssociation: boolean;
+      } | null = null;
+      let controllerChecksPass: boolean | null = null;
+      if (runtime.autoresearchMode && isJevControllerActive(ctx.cwd)) {
+        try {
+          const loaded = loadControllerResolution(ctx.cwd);
+          const session = getControllerSession(
+            ctx,
+            workDir,
+            loaded.enabled ? loaded.config.maxCancellationsPerSegment : 2,
+          );
+          controllerChecksPass = runtime.lastRunChecks ? runtime.lastRunChecks.pass : null;
+          const prepared = prepareControllerLog({
+            workDir,
+            lifecycle: session.lifecycle,
+            hasBaseline: currentResults(state.results, state.currentSegment).length > 0,
+            asi: (params.asi ?? undefined) as Record<string, unknown> | undefined,
+            readRevision: () => readSourceRevision(workDir),
+            readChangedPaths: () => readChangedTargetPaths(workDir),
+            readPatchHash: (changed) => readTargetPatchHash(workDir, changed),
+          });
+          if (prepared) {
+            controllerLog = {
+              lifecycle: session.lifecycle,
+              decisionId: prepared.decisionId,
+              segment: prepared.segment,
+              epoch: prepared.epoch,
+              patchHash: prepared.patchHash,
+              augmentedAsi: prepared.augmentedAsi,
+              recoveredAssociation: prepared.recoveredAssociation,
+            };
+          }
+        } catch (e) {
+          return {
+            content: [{ type: "text", text: `❌ log_experiment rejected: ${e instanceof Error ? e.message : String(e)}` }],
+            details: {},
+          };
+        }
+      }
+
       // ASI: agent-supplied free-form diagnostics
-      const mergedASI = (params.asi && Object.keys(params.asi).length > 0)
-        ? params.asi as ASI
-        : undefined;
+      const mergedASI = (
+        controllerLog
+          ? controllerLog.augmentedAsi
+          : (params.asi && Object.keys(params.asi).length > 0)
+            ? params.asi as ASI
+            : undefined
+      ) as ASI | undefined;
 
       const experiment: ExperimentResult = {
         commit: params.commit.slice(0, 7),
@@ -2680,6 +2813,45 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
           text += `\n📝 Git: reverted changes (${params.status}) — autoresearch files preserved`;
         } catch (e) {
           text += `\n⚠️ Git revert failed: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+
+      // Journal the controller outcome after the runner lifecycle succeeded
+      // (ticket 09): the commit/revert + upstream log write above are
+      // authoritative; this only links them to the decision through existing
+      // ASI metadata — never as a new upstream log entry. A failed append
+      // warns here and restart recovery closes it from the upstream link.
+      if (controllerLog) {
+        const runNumber = state.results.length;
+        let postLogCommit: string;
+        try {
+          postLogCommit = readHeadCommit(workDir);
+          if (postLogCommit === "unknown-commit" && experiment.commit) {
+            postLogCommit = experiment.commit;
+          }
+        } catch {
+          postLogCommit = experiment.commit || "unknown-commit";
+        }
+        if (!postLogCommit) postLogCommit = "unknown-commit";
+        try {
+          completeControllerLog({
+            lifecycle: controllerLog.lifecycle,
+            decisionId: controllerLog.decisionId,
+            run: runNumber,
+            segment: controllerLog.segment,
+            epoch: controllerLog.epoch,
+            patchHash: controllerLog.patchHash,
+            metric: params.metric,
+            checksPass: controllerChecksPass,
+            status: params.status,
+            postLogCommit,
+          });
+          const recovered = controllerLog.recoveredAssociation
+            ? " (benchmark association recovered at log time)"
+            : "";
+          text += `\n🔗 Controller: decision ${controllerLog.decisionId} completed (run #${runNumber})${recovered}. Next selection reads the retained state.`;
+        } catch (e) {
+          text += `\n⚠️ Controller outcome not journaled (${e instanceof Error ? e.message : String(e)}); restart recovery will close it from the upstream log link.`;
         }
       }
 

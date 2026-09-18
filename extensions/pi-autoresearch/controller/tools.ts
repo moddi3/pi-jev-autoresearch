@@ -26,6 +26,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -58,15 +59,24 @@ import {
 import {
   ControllerLifecycle,
   LifecycleTransitionError,
+  assertRevisionFresh,
   type LifecycleState,
 } from "./lifecycle.ts";
 import {
   ControllerStoreError,
+  appendControllerEvent,
+  controllerDecisionAsi,
   countCancellationsInSegment,
+  extractDecisionIdFromAsi,
   freezePolicy,
   loadControllerPolicy,
+  readControllerEvents,
   sha256Hex,
+  stableStringify,
+  type OutcomeRecord,
+  type OutcomeRecordInput,
   type RevisionSnapshot,
+  type UpstreamOutcomeLink,
 } from "./store.ts";
 import type { ControllerConfig } from "./types.ts";
 import type { JevClient } from "./jev-client.ts";
@@ -626,7 +636,7 @@ export async function executeSelectExperiment(
   const { workDir, sessionId, worktree, snapshot, config, lifecycle, evidence, books } = deps;
 
   try {
-    lifecycle.recover();
+    lifecycle.recover({ upstreamOutcomes: readUpstreamOutcomeLinks(workDir) });
   } catch (cause) {
     return {
       ok: false,
@@ -635,6 +645,12 @@ export async function executeSelectExperiment(
         "no selection is usable. Action: stop — Stop this line of attempts and report.",
     };
   }
+
+  // Terminal slots carry no pending work. Free the slot so the next decision
+  // can start — notably after a restart, where recovery lands in the
+  // journaled terminal state instead of the acknowledged in-memory one
+  // (ticket 09: the next decision follows the actual logged state).
+  freeTerminalDecision(lifecycle);
 
   let validated;
   try {
@@ -879,4 +895,510 @@ export async function executeCancelSelection(
       text: `❌ cancellation rejected: ${cause instanceof Error ? cause.message : String(cause)}\nAction: stop — ${actionHint("stop")}`,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Run / log linkage (ticket 09, AGENT_HANDOFF.md §6.6 + §7 + §9)
+//
+// Every post-baseline benchmark runs under a usable pending decision and its
+// result is associated with the actually implemented diff; the subsequent log
+// completes that association after the existing runner lifecycle succeeds.
+// Upstream correctness checks and keep/discard semantics are untouched: the
+// keep-when-checks-failed gate stays first, Jev never overrides a failing
+// test, and Choice probability is never read here, let alone reinterpreted
+// as measured improvement.
+//
+// Selection is a workflow contract, not a sandbox: a broad `bash` tool can
+// still modify files outside the preflight. V1 therefore rechecks allowed
+// changed paths before the registered benchmark, compares protected-script
+// hashes (the selection-time benchmark hash), and journals suspected
+// protocol violations without claiming confinement. At run time target edits
+// are expected, so worktree dirtiness is never compared — only the base
+// commit and content hashes.
+// ---------------------------------------------------------------------------
+
+/**
+ * True for session/preserved paths that never need a selection: everything
+ * under `.auto/` plus the legacy flat `autoresearch.*` session files, which
+ * the revert path preserves exactly like `.auto/`.
+ */
+export function isPreservedSessionPath(target: string): boolean {
+  const normalized = normalizeScopePath(target);
+  if (normalized === ".auto" || normalized.startsWith(".auto/")) return true;
+  const base = normalized.split("/").pop() ?? normalized;
+  return base.startsWith("autoresearch.");
+}
+
+/**
+ * Changed target paths outside the selected experiment's approved scope.
+ * `approved === null` means the scope is unknown and fails open (the
+ * preflight owns fail-open-on-missing-data); a known scope — including an
+ * empty `remeasure` scope — fails closed. Preserved session paths are always
+ * allowed.
+ */
+export function findOutOfScopePaths(changedPaths: string[], approved: string[] | null): string[] {
+  if (approved === null) return [];
+  const allowed = new Set(approved.map(normalizeScopePath));
+  return changedPaths.filter((changed) => {
+    const normalized = normalizeScopePath(changed);
+    if (isPreservedSessionPath(normalized)) return false;
+    return !allowed.has(normalized);
+  });
+}
+
+/**
+ * Deterministic identity for the actually implemented diff: the base commit
+ * plus the sorted path/sha pairs of the changed target files. Always
+ * non-empty hex, even when nothing changed (a `remeasure` run).
+ */
+export function hashImplementedPatch(input: {
+  baseCommit: string;
+  files: Array<{ path: string; sha256: string }>;
+}): string {
+  const files = [...input.files]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .map((file) => ({ path: file.path, sha256: file.sha256 }));
+  return sha256Hex(stableStringify({ baseCommit: input.baseCommit, files }));
+}
+
+/** Work-dir-relative target paths changed in the working tree (git status). */
+export function readChangedTargetPaths(workDir: string): string[] {
+  let output: string;
+  try {
+    output = execFileSync("git", ["status", "--porcelain=v1", "-uall"], {
+      cwd: workDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString("utf-8");
+  } catch {
+    return [];
+  }
+  const changed: string[] = [];
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const raw = line.slice(3).trim().replace(/^"|"$/g, "");
+    const arrow = raw.indexOf(" -> ");
+    const rel = arrow >= 0 ? raw.slice(arrow + 4).replace(/^"|"$/g, "") : raw;
+    if (rel.length === 0 || isPreservedSessionPath(rel)) continue;
+    changed.push(rel);
+  }
+  return changed;
+}
+
+/**
+ * Hash the actual implemented diff: the current base commit plus the content
+ * hash of every changed target path (deleted files hash a marker). Preserved
+ * session paths are excluded by construction — the caller's `changedPaths`
+ * must already come from `readChangedTargetPaths` — so journal appends from
+ * the controller itself never perturb the identity.
+ */
+export function readTargetPatchHash(workDir: string, changedPaths: string[]): string {
+  let baseCommit = "unknown";
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: workDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString("utf-8").trim();
+    if (head.length > 0) baseCommit = head;
+  } catch {
+    // Non-git worktrees keep the explicit "unknown" marker.
+  }
+  const files: Array<{ path: string; sha256: string }> = [];
+  for (const rel of changedPaths) {
+    try {
+      const data = fs.readFileSync(path.join(workDir, rel));
+      files.push({ path: normalizeScopePath(rel), sha256: crypto.createHash("sha256").update(data).digest("hex") });
+    } catch {
+      files.push({ path: normalizeScopePath(rel), sha256: "<deleted>" });
+    }
+  }
+  return hashImplementedPatch({ baseCommit, files });
+}
+
+/** Current post-log commit identity: full HEAD, or an explicit marker. */
+export function readHeadCommit(workDir: string): string {
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: workDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString("utf-8").trim();
+    if (head.length > 0) return head;
+  } catch {
+    // Non-git worktrees keep the explicit marker below.
+  }
+  return "unknown-commit";
+}
+
+export interface SuspectedViolation {
+  decisionId?: string;
+  reason: string;
+  detail?: string;
+}
+
+const SUSPECTED_VIOLATION_DETAIL_CHARS = 2000;
+
+/**
+ * Journal a suspected protocol violation (§7). Best-effort by design: a
+ * failed append never blocks measurement — the violation log is advisory,
+ * the run association is authoritative.
+ */
+export function logSuspectedViolation(workDir: string, violation: SuspectedViolation): void {
+  const reason = violation.reason.trim().length > 0 ? violation.reason.trim() : "suspected protocol violation";
+  const detail = typeof violation.detail === "string" && violation.detail.length > 0
+    ? violation.detail.slice(0, SUSPECTED_VIOLATION_DETAIL_CHARS)
+    : undefined;
+  appendControllerEvent(workDir, {
+    v: 1,
+    kind: "suspected_violation",
+    reason,
+    ...(violation.decisionId ? { decisionId: violation.decisionId } : {}),
+    ...(detail ? { detail } : {}),
+  });
+}
+
+/**
+ * Attach controller-owned decision identifiers to upstream ASI. The
+ * controller-owned keys always win: an LLM-supplied copy is overwritten, so
+ * the link can never be spoofed through `log_experiment` params.
+ */
+export function attachControllerAsi(
+  asi: Record<string, unknown> | undefined,
+  decisionId: string,
+  extra: { segment: number; epoch: number },
+): Record<string, unknown> {
+  return { ...(asi ?? {}), ...controllerDecisionAsi(decisionId, extra) };
+}
+
+/**
+ * Pure mapping from a logged upstream result to its controller outcome
+ * input. Non-finite metrics become an explicit null (malformed metrics never
+ * poison the journal); the status/checks vocabularies are identical to the
+ * upstream `log_experiment` contract on purpose.
+ */
+export function buildLogOutcomeInput(input: {
+  decisionId: string;
+  run: number;
+  segment: number;
+  epoch: number;
+  patchHash: string;
+  metric: unknown;
+  checksPass: boolean | null;
+  status: "keep" | "discard" | "crash" | "checks_failed";
+  postLogCommit: string;
+}): OutcomeRecordInput {
+  const metric = typeof input.metric === "number" && Number.isFinite(input.metric) ? input.metric : null;
+  return {
+    decisionId: input.decisionId,
+    run: input.run,
+    segment: input.segment,
+    epoch: input.epoch,
+    patchHash: input.patchHash,
+    measured: { metric },
+    checks: { status: input.checksPass === null ? "not-run" : input.checksPass ? "pass" : "fail" },
+    result: input.status,
+    postLogCommit: input.postLogCommit,
+  };
+}
+
+/**
+ * Upstream `.auto/log.jsonl` run entries linked to decisions through
+ * `asi.controller_decision_id`. Never throws: a missing log means no links,
+ * and unparsable lines are skipped (they cannot carry a link).
+ */
+export function readUpstreamOutcomeLinks(workDir: string): UpstreamOutcomeLink[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(sessionFilePath(workDir, "log"), "utf-8");
+  } catch {
+    return [];
+  }
+  const links: UpstreamOutcomeLink[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (typeof entry.run !== "number" || !Number.isInteger(entry.run)) continue;
+    const decisionId = extractDecisionIdFromAsi(entry.asi);
+    if (!decisionId) continue;
+    links.push({
+      decisionId,
+      run: entry.run,
+      ...(typeof entry.status === "string" ? { result: entry.status } : {}),
+    });
+  }
+  return links;
+}
+
+/** Latest implemented-diff hash journaled for a decision, if any. */
+export function findBenchmarkPatchHash(workDir: string, decisionId: string): string | undefined {
+  let events;
+  try {
+    events = readControllerEvents(workDir).events;
+  } catch {
+    return undefined;
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "benchmark_completed" && event.decisionId === decisionId) {
+      return event.patchHash;
+    }
+  }
+  return undefined;
+}
+
+/** Approved scope of the pending decision, or null when unknown (fail open). */
+function approvedScopeFor(lifecycle: ControllerLifecycle): string[] | null {
+  try {
+    const record = lifecycle.pendingDecisionRecord();
+    if (!record) return null;
+    const selected = record.acceptedCandidates.find(
+      (candidate) => candidate.id === record.selection.selectedId,
+    );
+    if (!selected) return [];
+    return [...selected.filesToChange];
+  } catch {
+    return null;
+  }
+}
+
+export interface PreparedRun {
+  decisionId: string;
+  /** Work-dir-relative target paths outside the approved scope (journaled). */
+  outOfScope: string[];
+  /** Human-readable violation summaries, already journaled. */
+  notices: string[];
+}
+
+/**
+ * Gate a post-baseline `run_experiment` on a usable pending decision.
+ *
+ * Returns `null` for baseline-establishment runs (no segment results yet):
+ * they are exempt and proceed without any linkage. Otherwise verifies the
+ * base commit and content hashes (target edits are expected, so dirtiness is
+ * never compared), rechecks allowed paths, journals suspected violations
+ * best-effort, and opens the `selected -> running` association (idempotent
+ * for duplicate tool retries). Throws `ControllerStoreError` or
+ * `LifecycleTransitionError` with LLM-actionable guidance when the run must
+ * not measure.
+ */
+export function prepareControllerRun(deps: {
+  workDir: string;
+  lifecycle: ControllerLifecycle;
+  hasBaseline: boolean;
+  readRevision: () => RevisionSnapshot;
+  readChangedPaths: () => string[];
+}): PreparedRun | null {
+  const { workDir, lifecycle, hasBaseline } = deps;
+  lifecycle.recover({ upstreamOutcomes: readUpstreamOutcomeLinks(workDir) });
+  if (!hasBaseline) return null;
+
+  const pending = lifecycle.pendingSnapshot;
+  const state = lifecycle.state;
+  if (!pending) {
+    if (state === "completed") {
+      throw new ControllerStoreError(
+        "validation",
+        "this decision already completed — its result is logged upstream. " +
+          "Call select_experiment with a fresh set of candidates for the next experiment.",
+      );
+    }
+    throw new ControllerStoreError(
+      "validation",
+      `post-baseline run_experiment requires a usable pending decision (lifecycle: ${state}, pending: none). ` +
+        "Call select_experiment with 2-4 concrete candidates, implement the selected experiment, then run. " +
+        "Baseline establishment (no logged results yet) is exempt; this segment already has results.",
+    );
+  }
+  if (state === "awaiting_log") {
+    throw new ControllerStoreError(
+      "validation",
+      `decision ${pending.decisionId} already has a measured run awaiting log_experiment. ` +
+        "Log it before running again — back-to-back runs without logging are rejected.",
+    );
+  }
+  if (state !== "selected" && state !== "running") {
+    throw new ControllerStoreError(
+      "validation",
+      `decision ${pending.decisionId} is not runnable (lifecycle: ${state}). ` +
+        "Resume the pending work — implement the selected experiment, then run and log it — " +
+        "or cancel_selection with new evidence before proposing again.",
+    );
+  }
+
+  const revision = deps.readRevision();
+  const approved = approvedScopeFor(lifecycle);
+  const preChangedPaths = deps.readChangedPaths();
+  const outOfScope = findOutOfScopePaths(preChangedPaths, approved);
+  const notices: string[] = [];
+  if (outOfScope.length > 0) {
+    const reason = "changed paths outside the approved scope were present before the benchmark";
+    try {
+      logSuspectedViolation(workDir, {
+        decisionId: pending.decisionId,
+        reason,
+        detail: `out-of-scope: ${outOfScope.join(", ")}; approved: ${(approved ?? []).join(", ") || "(remeasure: no target files)"}`,
+      });
+    } catch {
+      // Best-effort: the violation log must never block measurement.
+    }
+    notices.push(`suspected protocol violation logged: ${reason} (${outOfScope.join(", ")})`);
+  }
+  if (revision.benchmarkHash !== pending.revision.benchmarkHash) {
+    try {
+      logSuspectedViolation(workDir, {
+        decisionId: pending.decisionId,
+        reason: "protected benchmark script changed after selection",
+        detail: `benchmarkHash ${pending.revision.benchmarkHash} -> ${revision.benchmarkHash}`,
+      });
+    } catch {
+      // Best-effort, as above.
+    }
+    notices.push("suspected protocol violation logged: protected benchmark script changed after selection");
+  }
+
+  // Rejects a changed base source loudly; target edits stay expected.
+  assertRevisionFresh(pending.revision, revision);
+  lifecycle.beginRun(pending.decisionId, revision);
+  return { decisionId: pending.decisionId, outOfScope, notices };
+}
+
+export interface PreparedLog {
+  decisionId: string;
+  segment: number;
+  epoch: number;
+  patchHash: string;
+  augmentedAsi: Record<string, unknown>;
+  /** True when the benchmark association was recovered at log time. */
+  recoveredAssociation: boolean;
+  notices: string[];
+}
+
+/**
+ * Prepare a post-baseline `log_experiment` to complete its run association.
+ * Returns `null` for baseline logs (no pending decision and no segment
+ * results yet). Attaches controller-owned ASI (controller keys win) and, when
+ * the benchmark association was missed — e.g. a crash between measurement
+ * and its journal append — recovers it from the current tree before the
+ * runner lifecycle runs. Throws with LLM-actionable guidance otherwise.
+ */
+export function prepareControllerLog(deps: {
+  workDir: string;
+  lifecycle: ControllerLifecycle;
+  hasBaseline: boolean;
+  asi: Record<string, unknown> | undefined;
+  readRevision: () => RevisionSnapshot;
+  readChangedPaths: () => string[];
+  readPatchHash: (changedPaths: string[]) => string;
+}): PreparedLog | null {
+  const { workDir, lifecycle, hasBaseline } = deps;
+  lifecycle.recover({ upstreamOutcomes: readUpstreamOutcomeLinks(workDir) });
+  const pending = lifecycle.pendingSnapshot;
+  if (!pending) {
+    if (!hasBaseline) return null;
+    if (lifecycle.state === "completed") {
+      throw new ControllerStoreError(
+        "validation",
+        "this decision already completed — its result is logged upstream. " +
+          "Select the next experiment instead of logging again.",
+      );
+    }
+    throw new ControllerStoreError(
+      "validation",
+      `log_experiment has no pending decision to complete (lifecycle: ${lifecycle.state}). ` +
+        "Post-baseline results must follow select -> implement -> run for the same decision; " +
+        "re-run the selected experiment instead of logging a detached result.",
+    );
+  }
+  let state = lifecycle.state;
+  if (state === "selected" && !hasBaseline) {
+    // First log for a pre-baseline selection: its run was correctly exempt
+    // (no baseline existed to require linkage), so the association was never
+    // opened. Open and close it now from the current tree — the runner
+    // lifecycle below has not committed or reverted anything yet.
+    const revision = deps.readRevision();
+    assertRevisionFresh(pending.revision, revision);
+    lifecycle.beginRun(pending.decisionId, revision);
+    state = lifecycle.state;
+  }
+  if (state !== "awaiting_log" && state !== "running") {
+    throw new ControllerStoreError(
+      "validation",
+      `decision ${pending.decisionId} cannot be logged (lifecycle: ${state}). ` +
+        (state === "completed"
+          ? "This decision already completed — its result is logged. Select the next experiment instead of logging again."
+          : "Run the selected experiment first, then log its result."),
+    );
+  }
+
+  let patchHash = findBenchmarkPatchHash(workDir, pending.decisionId);
+  let recoveredAssociation = false;
+  const notices: string[] = [];
+  if (state === "running" || !patchHash) {
+    const changed = deps.readChangedPaths();
+    patchHash = deps.readPatchHash(changed);
+    try {
+      lifecycle.recordBenchmark(pending.decisionId, patchHash);
+    } catch (cause) {
+      throw new ControllerStoreError(
+        "validation",
+        `decision ${pending.decisionId} cannot complete its benchmark association: ` +
+          `${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+    recoveredAssociation = true;
+    notices.push("benchmark association recovered at log time from the current tree");
+  }
+
+  return {
+    decisionId: pending.decisionId,
+    segment: pending.segment,
+    epoch: pending.epoch,
+    patchHash,
+    augmentedAsi: attachControllerAsi(deps.asi, pending.decisionId, {
+      segment: pending.segment,
+      epoch: pending.epoch,
+    }),
+    recoveredAssociation,
+    notices,
+  };
+}
+
+/**
+ * Journal the controller outcome and free the single-use slot, strictly after
+ * the existing runner lifecycle (commit/revert + upstream log write)
+ * succeeded. Terminal `completed` becomes `needs_selection` immediately so
+ * the next decision is prepared from the actual retained/reverted source
+ * state read after logging.
+ */
+export function completeControllerLog(deps: {
+  lifecycle: ControllerLifecycle;
+  decisionId: string;
+  run: number;
+  segment: number;
+  epoch: number;
+  patchHash: string;
+  metric: unknown;
+  checksPass: boolean | null;
+  status: "keep" | "discard" | "crash" | "checks_failed";
+  postLogCommit: string;
+}): OutcomeRecord {
+  const outcome = deps.lifecycle.completeLog(buildLogOutcomeInput(deps));
+  deps.lifecycle.acknowledge();
+  return outcome;
+}
+
+/**
+ * Free a terminal slot (`completed`/`cancelled` carry no pending work) so the
+ * next selection can start — notably after a restart, where recovery lands in
+ * the journaled terminal state instead of the acknowledged in-memory one.
+ */
+export function freeTerminalDecision(lifecycle: ControllerLifecycle): boolean {
+  if (lifecycle.state === "completed" || lifecycle.state === "cancelled") {
+    lifecycle.acknowledge();
+    return true;
+  }
+  return false;
 }

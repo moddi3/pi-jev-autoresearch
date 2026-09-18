@@ -642,6 +642,7 @@ export type ControllerEvent =
   | { v: 1; kind: "decision_discarded"; eventId: string; at: string; decisionId: string; reason: string }
   | { v: 1; kind: "new_proposals"; eventId: string; at: string; decisionId: string; segment: number; epoch: number; reason: string }
   | { v: 1; kind: "controller_paused"; eventId: string; at: string; reason: string; decisionId?: string }
+  | { v: 1; kind: "suspected_violation"; eventId: string; at: string; reason: string; decisionId?: string; detail?: string }
   | { v: 1; kind: "policy_frozen"; eventId: string; at: string; policyHash: string; version: number; epoch: number; segment: number }
   | { v: 1; kind: "pending_invalidated"; eventId: string; at: string; decisionId?: string; reason: string };
 
@@ -661,6 +662,7 @@ const EVENT_KINDS = new Set([
   "controller_paused",
   "policy_frozen",
   "pending_invalidated",
+  "suspected_violation",
 ]);
 
 function validateEventShape(event: unknown): asserts event is ControllerEvent {
@@ -1236,6 +1238,7 @@ function foldJournal(events: ControllerEvent[]): { trails: Map<string, DecisionT
       case "controller_paused":
       case "policy_frozen":
       case "pending_invalidated":
+      case "suspected_violation":
         break;
     }
   }
