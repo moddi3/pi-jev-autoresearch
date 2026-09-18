@@ -10,11 +10,12 @@
 //   over the 24 outcome-labeled snapshots to prove the analysis plumbing.
 //   Fixture results live in the separately labeled `diagnostics`
 //   section (`outcomeSource: "fixtures"`); no live call is made. Exits 0.
-// - `--mode=live`: requires TYPESAFE_API_KEY, then reports
-//   `not_implemented` and exits nonzero until the ticket-07 trajectory
-//   executor exists. A key proves intent, never execution: no mock result
-//   is ever reported as live (`executedMode: "none"`,
-//   `completedTrajectories: 0`, `outcomeSource: "none"`).
+// - `--mode=live`: requires TYPESAFE_API_KEY, then the executor preflight
+//   refuses (`not_implemented`, exit nonzero) until the live capability gaps
+//   close (structured-LLM live transport, arm-A upstream agent loop). A key
+//   proves intent, never execution: no mock result is ever reported as live
+//   (`executedMode: "none"`, `completedTrajectories: 0`,
+//   `outcomeSource: "none"`).
 //
 // What the replay path proves (the only automated path):
 // - the 27-trial plan builds (3 tasks x 3 trials x 3 arms x 10 slots),
@@ -49,6 +50,10 @@ import {
   runFrozenPilotComparison,
   validatePilotPairing,
 } from "../../extensions/pi-autoresearch/controller/paired-pilot.ts";
+import {
+  LIVE_CAPABILITY_GAPS,
+  assertLivePilotCapable,
+} from "../../extensions/pi-autoresearch/controller/trajectory-executor.ts";
 import { allLabeledSnapshots, validateLabeledSet } from "../../extensions/pi-autoresearch/controller/labeled-snapshots.ts";
 import {
   buildTrialManifest,
@@ -217,8 +222,9 @@ export function normalizePilotMode(raw) {
 /**
  * Shared report envelope. `providerCalls` and `completedTrajectories` are
  * event counts, not measurements: zero calls were made and zero
- * trajectories completed on every path of this harness until the ticket-07
- * executor exists. Absent measurements (cost, latency, gains) stay absent
+ * trajectories completed on every path of this harness. The live path runs
+ * the ticket-07 executor preflight, which refuses until the live capability
+ * gaps close. Absent measurements (cost, latency, gains) stay absent
  * (null/omitted), never zero-filled.
  */
 function pilotEnvelope({ requestedMode, executedMode, status, transport, outcomeSource, forkSha, upstreamSha, startedAt }) {
@@ -253,9 +259,21 @@ export async function runPairedPilot(options = {}) {
       blocked.code = "LIVE_BLOCKED";
       throw blocked;
     }
-    // The key proves intent, never execution: no trajectory executor exists
-    // yet (ticket 07-real-executor-pilot), so a requested live run fails
-    // loudly instead of reporting mock plumbing as a live comparison.
+    // The key proves intent, never execution. The ticket-07 trajectory
+    // executor exists and is mock-verified, but the live pilot cannot
+    // genuinely execute until its capability gaps close (structured-LLM live
+    // transport, arm-A upstream agent loop). The plan still builds and
+    // validates below; then the executor preflight refuses loudly instead of
+    // reporting mock plumbing as a live comparison.
+    const liveConfig = buildConfig(options.orderSeed ?? 11);
+    const livePlan = buildPilotPlan(liveConfig);
+    validatePilotPairing(livePlan, liveConfig);
+    let capabilityError = null;
+    try {
+      assertLivePilotCapable({ llmTransportKind: "unbuilt", upstreamLoop: "substitute" });
+    } catch (error) {
+      capabilityError = error;
+    }
     const report = {
       ...pilotEnvelope({
         requestedMode, executedMode: "none", status: "not_implemented",
@@ -263,16 +281,18 @@ export async function runPairedPilot(options = {}) {
       }),
       live: {
         status: "NOT_IMPLEMENTED",
-        reason: "TYPESAFE_API_KEY is present but the live trajectory executor is not built yet (see ticket 07-real-executor-pilot); no provider call was made and no trajectory ran",
+        reason: `TYPESAFE_API_KEY is present but the live pilot is not capable of genuine execution yet (see ticket 07-real-executor-pilot): ${capabilityError?.message ?? "capability preflight refused"}. The trajectory executor is built and mock-verified; no provider call was made and no trajectory ran`,
+        capabilityGaps: [...LIVE_CAPABILITY_GAPS],
       },
-      milestone: "live execution requested but not implemented: plan validation and fixture replay are the only available modes",
-      executor: "unimplemented",
+      planValidated: { entries: livePlan.entries.length, pairing: "valid" },
+      milestone: "live execution requested but not capable: plan validation and fixture replay are the only available modes",
+      executor: "built-and-mock-verified (ticket 07); live execution BLOCKED on capability gaps, never passed",
       limitations: [PILOT_LIMITATIONS],
-      nextCommand: "node --experimental-strip-types evals/paired-pilot/run.mjs --mode=replay --out evals/paired-pilot/report.replay.json  # fixture replay only; live execution lands with ticket 07",
+      nextCommand: "node --experimental-strip-types evals/paired-pilot/run.mjs --mode=replay --out evals/paired-pilot/report.replay.json  # fixture replay only; live execution lands when the executor capability gaps close",
     };
     if (options.reportPath) await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`);
     const unimplemented = new Error(
-      "paired pilot live execution is not implemented (ticket 07-real-executor-pilot): no provider call was made and no trajectory ran",
+      "paired pilot live execution is not capable yet (ticket 07-real-executor-pilot): no provider call was made and no trajectory ran",
     );
     unimplemented.code = "LIVE_NOT_IMPLEMENTED";
     unimplemented.report = report;
@@ -388,7 +408,7 @@ export async function runPairedPilot(options = {}) {
           },
         },
         revalidation,
-        mockVsLive: "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY and live execution is NOT_IMPLEMENTED until the ticket-07 executor exists.",
+        mockVsLive: "All selector picks in this report are mock-backed stand-ins proving the analysis plumbing; no live TypeSafe call was made. Live validation is BLOCKED on TYPESAFE_API_KEY and live execution is NOT_CAPABLE until the executor capability gaps close (see ticket 07-real-executor-pilot).",
       },
     },
     milestone: "fixture replay complete as a diagnostic: analysis plumbing verified, no live trajectory executed",
