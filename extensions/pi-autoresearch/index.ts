@@ -70,6 +70,7 @@ import {
   prepareControllerLog,
   prepareControllerRun,
   readChangedTargetPaths,
+  readChecksHash,
   readHeadCommit,
   readSourceRevision,
   readTargetPatchHash,
@@ -77,7 +78,15 @@ import {
   type ExperimentSnapshot,
   type ProposalBooks,
 } from "./controller/tools.ts";
-import { isControllerPaused, loadPendingSnapshot } from "./controller/store.ts";
+import {
+  appendControllerEvent,
+  findFinalizationIntent,
+  findUpstreamRowByRunId,
+  isControllerPaused,
+  loadPendingSnapshot,
+  newRunId,
+  sha256Hex,
+} from "./controller/store.ts";
 
 // ---------------------------------------------------------------------------
 // Experiment output limits (sent to LLM — keep small to save context)
@@ -191,7 +200,10 @@ interface RunDetails {
   /** Name of the primary metric (for display) */
   metricName: string;
   metricUnit: string;
-
+  /** Runner-owned run receipt ID journaled for this measurement (Jev mode). */
+  runId?: string;
+  /** True when the target moved during measurement (receipt stale for keep). */
+  receiptStale?: boolean;
 }
 
 interface LogDetails {
@@ -2049,7 +2061,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       // usable pending decision and associate the result with the actual
       // implemented diff. Baseline establishment is exempt. Upstream
       // measurement, checks, and keep/discard behavior below are unchanged.
-      let controllerRun: { lifecycle: ControllerLifecycle; decisionId: string; notices: string[] } | null = null;
+      let controllerRun: { lifecycle: ControllerLifecycle; decisionId: string; frozenTargetHash: string; notices: string[] } | null = null;
       const gate = loadControllerGate(ctx.cwd, workDir);
       if (gate.status === "error") {
         return {
@@ -2092,6 +2104,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
             controllerRun = {
               lifecycle: session.lifecycle,
               decisionId: prepared.decisionId,
+              frozenTargetHash: prepared.frozenTargetHash,
               notices: prepared.notices,
             };
           }
@@ -2119,16 +2132,25 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       if (overlayTui) overlayTui.requestRender();
 
       const t0 = Date.now();
+      const startedAt = new Date(t0).toISOString();
 
       // Spawn the process directly (like the bash tool) for streaming output
       const getTempFile = createTempFileAllocator();
-      const { exitCode, killed: timedOut, output, tempFilePath: streamTempFile, actualTotalBytes } = await new Promise<{
+      let spawnResult: {
         exitCode: number | null;
         killed: boolean;
         output: string;
         tempFilePath: string | undefined;
         actualTotalBytes: number;
-      }>((resolve, reject) => {
+      };
+      try {
+        spawnResult = await new Promise<{
+          exitCode: number | null;
+          killed: boolean;
+          output: string;
+          tempFilePath: string | undefined;
+          actualTotalBytes: number;
+        }>((resolve, reject) => {
         let processTimedOut = false;
 
         const child = spawn("bash", ["-c", params.command], {
@@ -2279,10 +2301,43 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
           });
         });
       }).finally(() => {
-        runtime.runningExperiment = null;
-        updateWidget(ctx);
-        if (overlayTui) overlayTui.requestRender();
-      });
+          runtime.runningExperiment = null;
+          updateWidget(ctx);
+          if (overlayTui) overlayTui.requestRender();
+        });
+      } catch (spawnError) {
+        // The benchmark process never reported back (spawn failure or abort):
+        // no runner-owned receipt exists, so the run stays unmeasured and
+        // must be retried — its output is never trusted measurement.
+        const aborted = signal?.aborted === true;
+        runtime.lastRunDuration = (Date.now() - t0) / 1000;
+        return {
+          content: [{
+            type: "text",
+            text: aborted
+              ? `❌ run_experiment aborted before reporting. No measurement was recorded; retry the run.`
+              : `❌ run_experiment failed to execute (${spawnError instanceof Error ? spawnError.message : String(spawnError)}). No measurement was recorded; retry the run.`,
+          }],
+          details: {
+            command: params.command,
+            exitCode: null,
+            durationSeconds: runtime.lastRunDuration,
+            passed: false,
+            crashed: true,
+            timedOut: false,
+            tailOutput: "",
+            checksPass: null,
+            checksTimedOut: false,
+            checksOutput: "",
+            checksDuration: 0,
+            parsedMetrics: null,
+            parsedPrimary: null,
+            metricName: state.metricName,
+            metricUnit: state.metricUnit,
+          } as RunDetails,
+        };
+      }
+      const { exitCode, killed: timedOut, output, tempFilePath: streamTempFile, actualTotalBytes } = spawnResult;
 
       const durationSeconds = (Date.now() - t0) / 1000;
       runtime.lastRunDuration = durationSeconds;
@@ -2315,25 +2370,104 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         }
       }
 
-      // Store checks result for log_experiment gate
-      runtime.lastRunChecks = checksPass !== null ? { pass: checksPass, output: checksOutput, duration: checksDuration } : null;
+      // Parse structured METRIC lines from output (authoritative receipt metrics)
+      const parsedMetricMap = parseMetricLines(output);
+      const parsedMetrics = parsedMetricMap.size > 0
+        ? Object.fromEntries(parsedMetricMap)
+        : null;
+      const parsedPrimary = parsedMetricMap.get(state.metricName) ?? null;
+      const finishedAt = new Date().toISOString();
 
-      // Complete the run side of the controller association (ticket 09): the
-      // measured tree — whatever the benchmark actually ran against — is
-      // hashed into the pending decision. A failed append only warns: the
-      // benchmark details stay authoritative and log_experiment retries it.
+      // Persist the runner-owned run receipt before exposing the completed
+      // benchmark (review R1): the journaled receipt — never the working
+      // tree — is the durable proof of what ran. A failed append is a
+      // measurement failure, reported as such; the run stays unmeasured.
       let controllerPatchNote = "";
+      let runReceiptId: string | undefined;
+      let receiptStale = false;
       if (controllerRun) {
+        const postRunHash = readTargetPatchHash(workDir, readChangedTargetPaths(workDir));
+        const stale = postRunHash !== controllerRun.frozenTargetHash;
+        const postRevision = readSourceRevision(workDir);
+        const checksFileExists = fs.existsSync(checksPath);
+        const pending = controllerRun.lifecycle.pendingSnapshot;
+        let receiptTermination: "completed" | "timeout" | "aborted" | "process-error" = "completed";
+        if (timedOut) receiptTermination = "timeout";
+        else if (exitCode === null) receiptTermination = "process-error";
         try {
-          const patchHash = readTargetPatchHash(workDir, readChangedTargetPaths(workDir));
-          controllerRun.lifecycle.recordBenchmark(controllerRun.decisionId, patchHash);
+          const receipt = controllerRun.lifecycle.recordRunReceipt({
+            runId: newRunId(),
+            decisionId: controllerRun.decisionId,
+            segment: pending?.segment ?? 0,
+            epoch: pending?.epoch ?? 0,
+            parentCommit: postRevision.baseCommit,
+            targetSnapshotHash: controllerRun.frozenTargetHash,
+            benchmarkHash: postRevision.benchmarkHash,
+            checksHash: readChecksHash(workDir),
+            command: params.command,
+            startedAt,
+            finishedAt,
+            exitCode,
+            termination: receiptTermination,
+            metrics: Object.fromEntries(parsedMetricMap),
+            checks: {
+              required: checksFileExists,
+              status: !benchmarkPassed
+                ? "not-run"
+                : checksPass === null
+                  ? "not-run"
+                  : checksTimedOut
+                    ? "error"
+                    : checksPass
+                      ? "pass"
+                      : "fail",
+              outputHash: checksOutput.length > 0 ? sha256Hex(checksOutput) : null,
+            },
+            ...(stale
+              ? { stale: true as const, staleReason: "the target changed while the benchmark was measuring" }
+              : {}),
+          });
+          runReceiptId = receipt.runId;
+          receiptStale = stale;
           const suffix = controllerRun.notices.length > 0 ? ` ${controllerRun.notices.join(" ")}` : "";
-          controllerPatchNote = `\n🔗 Controller: decision ${controllerRun.decisionId} · patch ${patchHash.slice(0, 12)}.${suffix}`;
-        } catch (e) {
           controllerPatchNote =
-            `\n⚠️ Controller association incomplete (${e instanceof Error ? e.message : String(e)}); ` +
-            "the benchmark result above still stands — log_experiment will retry the association.";
+            `\n🔗 Controller: decision ${controllerRun.decisionId} · run ${receipt.runId} · patch ${controllerRun.frozenTargetHash.slice(0, 12)}.${suffix}` +
+            (stale ? "\n⚠️ The target changed during measurement — the receipt is stale and keep requires remeasurement." : "");
+          // Store checks result for the log_experiment gate (receipt-backed;
+          // restart recovery reads the journaled receipt instead).
+          runtime.lastRunChecks = checksPass !== null ? { pass: checksPass, output: checksOutput, duration: checksDuration } : null;
+        } catch (e) {
+          runtime.lastRunDuration = durationSeconds;
+          return {
+            content: [{
+              type: "text",
+              text:
+                `❌ Controller run receipt not persisted (${e instanceof Error ? e.message : String(e)}). ` +
+                "The benchmark output above is NOT a trusted measurement — log_experiment cannot use it. " +
+                "Rerun run_experiment to measure again.",
+            }],
+            details: {
+              command: params.command,
+              exitCode,
+              durationSeconds,
+              passed: false,
+              crashed: true,
+              timedOut,
+              tailOutput: "",
+              checksPass,
+              checksTimedOut,
+              checksOutput: checksOutput.split("\n").slice(-80).join("\n"),
+              checksDuration,
+              parsedMetrics,
+              parsedPrimary,
+              metricName: state.metricName,
+              metricUnit: state.metricUnit,
+            } as RunDetails,
+          };
         }
+      } else {
+        // Store checks result for log_experiment gate
+        runtime.lastRunChecks = checksPass !== null ? { pass: checksPass, output: checksOutput, duration: checksDuration } : null;
       }
 
       const passed = benchmarkPassed && (checksPass === null || checksPass);
@@ -2358,13 +2492,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         maxBytes: EXPERIMENT_MAX_BYTES,
       });
 
-      // Parse structured METRIC lines from output
-      const parsedMetricMap = parseMetricLines(output);
-      const parsedMetrics = parsedMetricMap.size > 0
-        ? Object.fromEntries(parsedMetricMap)
-        : null;
-      const parsedPrimary = parsedMetricMap.get(state.metricName) ?? null;
-
+      // Structured metrics were parsed above (authoritative receipt metrics).
       const details: RunDetails = {
         command: params.command,
         exitCode,
@@ -2381,6 +2509,8 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         parsedPrimary,
         metricName: state.metricName,
         metricUnit: state.metricUnit,
+        ...(runReceiptId ? { runId: runReceiptId } : {}),
+        ...(receiptStale ? { receiptStale: true as const } : {}),
       };
 
       // Build LLM response
@@ -2656,11 +2786,12 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         }
       }
 
-      // Jev-mode log linkage (ticket 09, §6.6): attach controller-owned
-      // decision identifiers (they win over LLM-supplied copies) and complete
-      // the association only after the runner lifecycle below succeeds. The
-      // keep-when-checks-failed gate above and all keep/discard behavior are
-      // unchanged: Jev never overrides a failing test.
+      // Jev-mode log linkage (review R1-R3): attach controller-owned
+      // decision identifiers (they win over LLM-supplied copies), enforce
+      // receipt authority for keep, and finalize through a durable
+      // write-ahead intent below. The keep-when-checks-failed gate above and
+      // all keep/discard behavior are unchanged: Jev never overrides a
+      // failing test.
       let controllerLog: {
         lifecycle: ControllerLifecycle;
         decisionId: string;
@@ -2669,6 +2800,9 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         patchHash: string;
         augmentedAsi: Record<string, unknown>;
         recoveredAssociation: boolean;
+        receiptRunId?: string;
+        receiptTargetHash?: string;
+        notices: string[];
       } | null = null;
       let controllerChecksPass: boolean | null = null;
       const logGate = loadControllerGate(ctx.cwd, workDir);
@@ -2699,6 +2833,11 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
             readRevision: () => readSourceRevision(workDir),
             readChangedPaths: () => readChangedTargetPaths(workDir),
             readPatchHash: (changed) => readTargetPatchHash(workDir, changed),
+            status: params.status,
+            metric: params.metric,
+            metrics: secondaryMetrics,
+            metricName: state.metricName,
+            checksPass: controllerChecksPass,
           });
           if (prepared) {
             controllerLog = {
@@ -2709,6 +2848,9 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
               patchHash: prepared.patchHash,
               augmentedAsi: prepared.augmentedAsi,
               recoveredAssociation: prepared.recoveredAssociation,
+              receiptRunId: prepared.runId,
+              receiptTargetHash: prepared.receipt?.targetSnapshotHash,
+              notices: prepared.notices,
             };
           }
         } catch (e) {
@@ -2740,8 +2882,84 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         asi: mergedASI,
       };
 
-      state.results.push(experiment);
-      runtime.experimentsThisSession++;
+      // Durable finalization identity (review R3): the write-ahead intent
+      // carries a run ID so a crash between the Git operation, the upstream
+      // row, and the outcome journal reconciles idempotently. Runs without a
+      // receipt (baseline exemption, interrupted-run dispositions) finalize
+      // under a deterministic per-decision ID so retries still dedupe.
+      const finalizationRunId = controllerLog
+        ? (controllerLog.receiptRunId ?? `noreceipt-${controllerLog.decisionId}`)
+        : undefined;
+      if (controllerLog && finalizationRunId && !controllerLog.receiptRunId) {
+        (controllerLog.augmentedAsi as Record<string, unknown>).controller_run_id = finalizationRunId;
+        if (experiment.asi) (experiment.asi as Record<string, unknown>).controller_run_id = finalizationRunId;
+      }
+      // A retried finalization after a mid-crash restart already holds its
+      // upstream row (rebuilt into memory from the persisted log): reuse it
+      // instead of recording the experiment twice.
+      let experimentPushed = false;
+      const secondaryMetricsCount = state.secondaryMetrics.length;
+      if (finalizationRunId) {
+        const linkedIndex = state.results.findIndex(
+          (result) => (result.asi as Record<string, unknown> | undefined)?.controller_run_id === finalizationRunId,
+        );
+        if (linkedIndex >= 0) {
+          const existing = state.results[linkedIndex];
+          experiment.commit = existing.commit;
+          experiment.confidence = existing.confidence;
+        } else {
+          state.results.push(experiment);
+          runtime.experimentsThisSession++;
+          experimentPushed = true;
+        }
+      } else {
+        state.results.push(experiment);
+        runtime.experimentsThisSession++;
+        experimentPushed = true;
+      }
+
+      /** Undo the speculative in-memory recording when finalization fails. */
+      const rollbackExperiment = (): void => {
+        if (!experimentPushed) return;
+        const index = state.results.lastIndexOf(experiment);
+        if (index >= 0) state.results.splice(index, 1);
+        runtime.experimentsThisSession--;
+        state.secondaryMetrics.length = secondaryMetricsCount;
+        state.bestMetric = findBaselineMetric(state.results, state.currentSegment);
+        state.confidence = computeConfidence(state.results, state.currentSegment, state.bestDirection);
+      };
+      /** Reject without pausing (agent-side problem; the decision stays pending). */
+      const rejectFinalization = (detail: string): { content: [{ type: "text"; text: string }]; details: Record<string, never> } => {
+        rollbackExperiment();
+        return {
+          content: [{ type: "text", text: `❌ log_experiment rejected: ${detail}` }],
+          details: {},
+        };
+      };
+      /** Fail closed on I/O: roll back, pause recoverably, never report success. */
+      const pauseFinalization = (detail: string): { content: [{ type: "text"; text: string }]; details: Record<string, never> } => {
+        rollbackExperiment();
+        if (controllerLog) {
+          try {
+            controllerLog.lifecycle.pauseController(
+              `finalization failed for decision ${controllerLog.decisionId} (${detail}); retry after repair`,
+            );
+          } catch {
+            // The pause journal itself failed; the error below still fails
+            // closed instead of reporting a success with a warning.
+          }
+        }
+        return {
+          content: [{
+            type: "text",
+            text:
+              `❌ log_experiment failed: ${detail}. ` +
+              `No result was recorded and decision ${controllerLog?.decisionId ?? "(unknown)"} still awaits finalization. ` +
+              "The controller is paused — resume with `/autoresearch controller resume`, then retry log_experiment.",
+          }],
+          details: {},
+        };
+      };
 
       // Register any new secondary metric names
       for (const name of Object.keys(secondaryMetrics)) {
@@ -2827,6 +3045,167 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       }
       text += `)`;
 
+      // Strict Jev finalization (review R3): write-ahead intent, verified
+      // Git work, deduplicated upstream row, journaled outcome. Any I/O
+      // failure pauses recoverably — never a success with a warning.
+      // Off-mode and exempt logs keep the legacy warn-and-proceed path below.
+      let jsonlEntry: Record<string, unknown>;
+      if (controllerLog && finalizationRunId) {
+        try {
+          const existingIntent = findFinalizationIntent(workDir, finalizationRunId);
+          if (
+            existingIntent &&
+            (existingIntent.status !== params.status || existingIntent.patchHash !== controllerLog.patchHash)
+          ) {
+            return rejectFinalization(
+              `conflicting finalization intent for run ${finalizationRunId} ` +
+                `(journaled ${existingIntent.status} patch ${existingIntent.patchHash.slice(0, 12)}, ` +
+                `attempted ${params.status} patch ${controllerLog.patchHash.slice(0, 12)})`,
+            );
+          }
+          if (!existingIntent) {
+            appendControllerEvent(workDir, {
+              v: 1,
+              kind: "finalization_started",
+              decisionId: controllerLog.decisionId,
+              runId: finalizationRunId,
+              status: params.status,
+              patchHash: controllerLog.patchHash,
+              targetSnapshotHash: controllerLog.receiptTargetHash ?? controllerLog.patchHash,
+            });
+          }
+        } catch (e) {
+          if (e instanceof Error && /conflicting finalization intent/.test(e.message)) {
+            return rejectFinalization(e.message);
+          }
+          return pauseFinalization(
+            `cannot journal finalization intent (${e instanceof Error ? e.message : String(e)})`,
+          );
+        }
+
+        if (params.status === "keep") {
+          try {
+            const resultData: Record<string, unknown> = {
+              status: params.status,
+              [state.metricName || "metric"]: params.metric,
+              ...secondaryMetrics,
+            };
+            const trailerJson = JSON.stringify(resultData);
+            const commitMsg = `${params.description}\n\nResult: ${trailerJson}`;
+            const execOpts = { cwd: workDir, timeout: 10000 };
+            const addResult = await pi.exec("git", ["add", "-A"], execOpts);
+            if (addResult.code !== 0) {
+              const addErr = (addResult.stdout + addResult.stderr).trim();
+              throw new Error(`git add failed (exit ${addResult.code}): ${addErr.slice(0, 200)}`);
+            }
+            const diffResult = await pi.exec("git", ["diff", "--cached", "--quiet"], execOpts);
+            if (diffResult.code === 0) {
+              text += `\n📝 Git: nothing to commit (working tree clean)`;
+            } else {
+              const gitResult = await pi.exec("git", ["commit", "-m", commitMsg], execOpts);
+              const gitOutput = (gitResult.stdout + gitResult.stderr).trim();
+              if (gitResult.code !== 0) {
+                throw new Error(`git commit failed (exit ${gitResult.code}): ${gitOutput.slice(0, 200)}`);
+              }
+              const firstLine = gitOutput.split("\n")[0] || "";
+              text += `\n📝 Git: committed — ${firstLine}`;
+              try {
+                const shaResult = await pi.exec("git", ["rev-parse", "--short=7", "HEAD"], { cwd: workDir, timeout: 5000 });
+                const newSha = (shaResult.stdout || "").trim();
+                if (newSha && newSha.length >= 7) {
+                  experiment.commit = newSha;
+                }
+              } catch {
+                // Keep the original commit hash if rev-parse fails
+              }
+            }
+          } catch (e) {
+            return pauseFinalization(e instanceof Error ? e.message : String(e));
+          }
+        }
+
+        // Upstream row, deduplicated by run ID: a crash between the append
+        // and the outcome journal reuses the existing row on retry.
+        const existingRow = findUpstreamRowByRunId(workDir, finalizationRunId);
+        let runNumber: number;
+        const memIndex = state.results.indexOf(experiment);
+        if (existingRow) {
+          runNumber = existingRow.run;
+          text += `\n📝 Log: reused upstream row #${runNumber} for run ${finalizationRunId} (finalization retry)`;
+        } else {
+          runNumber = memIndex >= 0 ? memIndex + 1 : state.results.length;
+        }
+        jsonlEntry = { run: runNumber, ...experiment };
+        if (!mergedASI) delete jsonlEntry.asi;
+        if (!existingRow) {
+          try {
+            const jsonlPath = autoresearchJsonlPath(workDir);
+            ensureParentDir(jsonlPath);
+            fs.appendFileSync(jsonlPath, JSON.stringify(jsonlEntry) + "\n");
+            broadcastDashboardUpdate(workDir);
+          } catch (e) {
+            return pauseFinalization(
+              `cannot append .auto/log.jsonl (${e instanceof Error ? e.message : String(e)})`,
+            );
+          }
+        }
+
+        if (params.status !== "keep") {
+          try {
+            const revertScript = `
+            git checkout -- . ':(exclude,glob)**/${AUTO_DIR}' ':(exclude,glob)**/${AUTO_DIR}/**' ':(exclude,glob)**/autoresearch.*' ':(exclude,glob)**/autoresearch.*/**'
+            git clean -fd -e '${AUTO_DIR}' -e '**/${AUTO_DIR}/**' -e 'autoresearch.*' -e '**/autoresearch.*/**' 2>/dev/null
+          `;
+            const revertResult = await pi.exec("bash", ["-c", revertScript], { cwd: workDir, timeout: 10000 });
+            if (revertResult.code !== 0) {
+              const revertErr = (revertResult.stdout + revertResult.stderr).trim();
+              throw new Error(`git revert failed (exit ${revertResult.code}): ${revertErr.slice(0, 200)}`);
+            }
+            text += `\n📝 Git: reverted changes (${params.status}) — autoresearch files preserved`;
+          } catch (e) {
+            return pauseFinalization(e instanceof Error ? e.message : String(e));
+          }
+        }
+
+        // Journal the controller outcome only after the verified work above.
+        // Exactly one outcome links this run: duplicates are rejected by the
+        // single-use pending slot, and crash retries dedupe upstream first.
+        let postLogCommit: string;
+        try {
+          postLogCommit = readHeadCommit(workDir);
+          if (postLogCommit === "unknown-commit" && experiment.commit) {
+            postLogCommit = experiment.commit;
+          }
+        } catch {
+          postLogCommit = experiment.commit || "unknown-commit";
+        }
+        if (!postLogCommit) postLogCommit = "unknown-commit";
+        try {
+          completeControllerLog({
+            lifecycle: controllerLog.lifecycle,
+            decisionId: controllerLog.decisionId,
+            run: runNumber,
+            segment: controllerLog.segment,
+            epoch: controllerLog.epoch,
+            patchHash: controllerLog.patchHash,
+            metric: params.metric,
+            metrics: secondaryMetrics,
+            checksPass: controllerChecksPass,
+            status: params.status,
+            postLogCommit,
+            runId: finalizationRunId,
+          });
+          const recovered = controllerLog.recoveredAssociation
+            ? " (benchmark association recovered at log time)"
+            : "";
+          const receiptNote = controllerLog.receiptRunId ? `, receipt run ${controllerLog.receiptRunId}` : "";
+          text += `\n🔗 Controller: decision ${controllerLog.decisionId} completed (run #${runNumber}${receiptNote})${recovered}. Next selection reads the retained state.`;
+        } catch (e) {
+          return pauseFinalization(
+            `controller outcome not journaled (${e instanceof Error ? e.message : String(e)})`,
+          );
+        }
+      } else {
       // Auto-commit only on keep — discards/crashes get reverted anyway
       if (params.status === "keep") {
         try {
@@ -2873,7 +3252,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         }
       }
 
-      const jsonlEntry: Record<string, unknown> = {
+      jsonlEntry = {
         run: state.results.length,
         ...experiment,
       };
@@ -2940,14 +3319,18 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
           text += `\n⚠️ Controller outcome not journaled (${e instanceof Error ? e.message : String(e)}); restart recovery will close it from the upstream log link.`;
         }
       }
+      }
+
+      if (controllerLog && controllerLog.notices.length > 0) {
+        text += `\n🔗 Controller notices: ${controllerLog.notices.join(" ")}`;
+      }
 
       const afterSteer = await fireHook({
         event: "after",
         cwd: workDir,
         run_entry: jsonlEntry,
         session: buildSessionSnapshot(state),
-      });
-      if (afterSteer) pi.sendUserMessage(afterSteer, { deliverAs: "steer" });
+      });      if (afterSteer) pi.sendUserMessage(afterSteer, { deliverAs: "steer" });
 
       const wallClockSeconds = runtime.lastRunDuration;
       runtime.runningExperiment = null;

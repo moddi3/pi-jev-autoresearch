@@ -13,6 +13,8 @@
  * paused --operator resume--> running|awaiting_log (measured-but-unfinalized
  *   work restored for finalization; `abandonMeasuredRun` invalidates instead)
  * needs_selection --begin_baseline--> baseline --baseline_completed/failed--> needs_selection
+ * awaiting_log --remeasure--> running (stale receipt or moved tree: the same
+ *   decision opens a fresh run; the new receipt supersedes the old one)
  * ```
  *
  * The baseline path is explicit and separate: baseline establishment never
@@ -31,6 +33,7 @@ import {
   appendControllerEvent,
   buildDecisionRecord,
   buildOutcomeRecord,
+  buildRunReceipt,
   clearPendingSnapshot,
   countCancellationsInSegment,
   loadPendingSnapshot,
@@ -45,6 +48,8 @@ import {
   type RecoverOptions,
   type RecoveryResult,
   type RevisionSnapshot,
+  type RunReceipt,
+  type RunReceiptInput,
 } from "./store.ts";
 
 /** All lifecycle states, including the explicit baseline path and pause. */
@@ -288,8 +293,12 @@ export class ControllerLifecycle {
    * conflicting decisions loudly; at run time target edits are expected, so
    * only the base commit and content hashes are compared — never worktree
    * dirtiness.
+   *
+   * The frozen target snapshot hash (implemented-diff identity captured
+   * before measurement) is journaled with the association so the measured
+   * artifact stays bound to the retained artifact across restarts.
    */
-  beginRun(decisionId: string, revision: RevisionSnapshot): RunAssociation {
+  beginRun(decisionId: string, revision: RevisionSnapshot, opts: { targetSnapshotHash?: string; command?: string } = {}): RunAssociation {
     if (this.pending && this.pending.decisionId === decisionId && this.currentState === "running") {
       return { decisionId, state: "running" };
     }
@@ -302,10 +311,42 @@ export class ControllerLifecycle {
       );
     }
     assertRevisionFresh(this.pending.revision, revision);
-    appendControllerEvent(this.workDir, { v: 1, kind: "run_started", decisionId, revision });
-    this.replacePending({ ...this.pending, state: "running", updatedAt: this.now() });
-    this.currentState = "running";
+    this.openRun(decisionId, revision, opts);
     return { decisionId, state: "running" };
+  }
+
+  /**
+   * awaiting_log -> running for a required remeasurement: the latest receipt
+   * is stale (or the tree moved from it, or no receipt exists yet), so the
+   * same decision opens a fresh run instead of logging the invalidated
+   * measurement. The fresh receipt supersedes the old one; history is
+   * preserved (both run_started events stay journaled).
+   */
+  rerunMeasurement(decisionId: string, revision: RevisionSnapshot, opts: { targetSnapshotHash?: string; command?: string } = {}): RunAssociation {
+    const from = this.currentState;
+    if (from !== "awaiting_log") throw new LifecycleTransitionError(from, "begin_run");
+    if (!this.pending || this.pending.decisionId !== decisionId) {
+      throw new ControllerStoreError(
+        "validation",
+        `no awaited decision ${JSON.stringify(decisionId)} (pending: ${this.pending?.decisionId ?? "none"})`,
+      );
+    }
+    assertRevisionFresh(this.pending.revision, revision);
+    this.openRun(decisionId, revision, opts);
+    return { decisionId, state: "running" };
+  }
+
+  private openRun(decisionId: string, revision: RevisionSnapshot, opts: { targetSnapshotHash?: string; command?: string }): void {
+    appendControllerEvent(this.workDir, {
+      v: 1,
+      kind: "run_started",
+      decisionId,
+      revision,
+      ...(opts.targetSnapshotHash ? { targetSnapshotHash: opts.targetSnapshotHash } : {}),
+      ...(opts.command ? { command: opts.command } : {}),
+    });
+    this.replacePending({ ...(this.pending as PendingSnapshot), state: "running", updatedAt: this.now() });
+    this.currentState = "running";
   }
 
   /** running -> awaiting_log, capturing the implemented diff identity. */
@@ -324,6 +365,29 @@ export class ControllerLifecycle {
     appendControllerEvent(this.workDir, { v: 1, kind: "benchmark_completed", decisionId, patchHash });
     this.replacePending({ ...this.pending, state: "awaiting_log", updatedAt: this.now() });
     this.currentState = "awaiting_log";
+  }
+
+  /**
+   * running -> awaiting_log via a runner-owned immutable run receipt. The
+   * receipt is validated and journaled before the completed benchmark is
+   * exposed: a failed append throws and the run stays unmeasured (the caller
+   * must report the measurement failure, never a success). A receipt bound
+   * to a different decision is rejected loudly.
+   */
+  recordRunReceipt(input: RunReceiptInput): RunReceipt {
+    const from = this.currentState;
+    if (from !== "running") throw new LifecycleTransitionError(from, "benchmark_recorded");
+    const receipt = buildRunReceipt(input);
+    if (!this.pending || this.pending.decisionId !== receipt.decisionId) {
+      throw new ControllerStoreError(
+        "validation",
+        `no running decision ${JSON.stringify(receipt.decisionId)} (pending: ${this.pending?.decisionId ?? "none"})`,
+      );
+    }
+    appendControllerEvent(this.workDir, { v: 1, kind: "run_receipt", receipt });
+    this.replacePending({ ...this.pending, state: "awaiting_log", updatedAt: this.now() });
+    this.currentState = "awaiting_log";
+    return receipt;
   }
 
   /** awaiting_log -> completed. Clears the single-use pending decision. */

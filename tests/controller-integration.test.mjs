@@ -410,19 +410,27 @@ test("select-edit-run-log keep links the decision to its measured outcome", asyn
 
     // Controller journal: separate storage, linked through ASI metadata —
     // never a new upstream log entry. Probabilities stay out of the outcome.
+    // The run is bound by an immutable runner-owned receipt and finalized
+    // through a durable write-ahead intent (review R1-R3).
     const events = readControllerEvents(cwd).events;
     assert.deepEqual(
       events.map((event) => event.kind),
-      ["decision", "run_started", "benchmark_completed", "outcome"],
+      ["decision", "run_started", "run_receipt", "finalization_started", "outcome"],
     );
+    const receipt = events.find((event) => event.kind === "run_receipt").receipt;
+    assert.equal(receipt.decisionId, decisionId);
+    assert.equal(receipt.metrics.runtime_ms, 50);
+    assert.equal(receipt.checks.status, "not-run");
+    assert.equal(receipt.checks.required, false);
+    assert.equal(receipt.termination, "completed");
+    assert.equal(receipt.exitCode, 0);
     const outcome = events.find((event) => event.kind === "outcome").record;
     assert.equal(outcome.decisionId, decisionId);
+    assert.equal(outcome.runId, receipt.runId);
     assert.equal(outcome.result, "keep");
     assert.match(outcome.patchHash, /^[0-9a-f]{64}$/);
-    assert.equal(
-      outcome.patchHash,
-      events.find((event) => event.kind === "benchmark_completed").patchHash,
-    );
+    assert.equal(outcome.patchHash, receipt.targetSnapshotHash);
+    assert.equal(runs[1].asi.controller_run_id, receipt.runId);
     assert.ok(!("probabilities" in outcome));
 
     // The keep really committed through git.

@@ -36,7 +36,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { AUTO_DIR } from "../paths.ts";
+import { AUTO_DIR, sessionFilePath } from "../paths.ts";
 import type { ExperimentCandidate } from "./types.ts";
 import type { LifecycleState } from "./lifecycle.ts";
 
@@ -63,6 +63,8 @@ export const CONTROLLER_ASI_DECISION_KEY = "controller_decision_id";
 export const CONTROLLER_ASI_EPOCH_KEY = "controller_epoch";
 /** Controller-owned upstream-log link: `asi.controller_segment`. */
 export const CONTROLLER_ASI_SEGMENT_KEY = "controller_segment";
+/** Controller-owned upstream-log link: `asi.controller_run_id`. */
+export const CONTROLLER_ASI_RUN_KEY = "controller_run_id";
 
 export type ControllerStoreErrorCode =
   | "validation"
@@ -345,6 +347,8 @@ export interface OutcomeRecord {
   v: 1;
   kind: "outcome";
   decisionId: string;
+  /** Runner-owned run receipt ID this outcome finalizes (absent for legacy rows). */
+  runId?: string;
   run: number | null;
   segment: number;
   epoch: number;
@@ -608,6 +612,10 @@ export function buildOutcomeRecord(input: OutcomeRecordInput): OutcomeRecord {
     outcome.checks.output = checks.output;
   }
   if (input.recovered === true) outcome.recovered = true;
+  const runId = (input as Record<string, unknown>).runId;
+  if (runId !== undefined) {
+    outcome.runId = requireNonEmptyString(runId, "runId");
+  }
   assertSecretFreeRecord(outcome);
   return outcome;
 }
@@ -615,12 +623,16 @@ export function buildOutcomeRecord(input: OutcomeRecordInput): OutcomeRecord {
 /** Controller-owned `asi` metadata linking an upstream run entry to a decision. */
 export function controllerDecisionAsi(
   decisionId: string,
-  extra: { segment?: number; epoch?: number } = {},
+  extra: { segment?: number; epoch?: number; runId?: string } = {},
 ): Record<string, unknown> {
   requireNonEmptyString(decisionId, "decisionId");
   const asi: Record<string, unknown> = { [CONTROLLER_ASI_DECISION_KEY]: decisionId };
   if (extra.segment !== undefined) asi[CONTROLLER_ASI_SEGMENT_KEY] = extra.segment;
   if (extra.epoch !== undefined) asi[CONTROLLER_ASI_EPOCH_KEY] = extra.epoch;
+  if (extra.runId !== undefined) {
+    requireNonEmptyString(extra.runId, "runId");
+    asi[CONTROLLER_ASI_RUN_KEY] = extra.runId;
+  }
   return asi;
 }
 
@@ -631,12 +643,148 @@ export function extractDecisionIdFromAsi(asi: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** Read a controller run ID back from upstream `asi` metadata (tolerant). */
+export function extractRunIdFromAsi(asi: unknown): string | undefined {
+  if (asi === null || typeof asi !== "object" || Array.isArray(asi)) return undefined;
+  const value = (asi as Record<string, unknown>)[CONTROLLER_ASI_RUN_KEY];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+// --- Runner-owned run receipts (ticket 03, review R1) ---
+
+/**
+ * Immutable runner-owned run receipt: the only durable proof that a
+ * benchmark process ran against a specific target snapshot and produced
+ * specific authoritative metrics. Persisted (journaled) before a completed
+ * benchmark is exposed to the agent; `log_experiment` keep requires one.
+ *
+ * `decisionId` is null only for the explicit baseline exemption (a baseline
+ * run with no pending decision). `stale` marks a receipt whose target
+ * snapshot changed after measurement (mid-run mutation or post-measure
+ * edit): stale receipts never support keep, only remeasurement or an
+ * explicitly unsuccessful disposition.
+ */
+export interface RunReceipt {
+  v: 1;
+  runId: string;
+  decisionId: string | null;
+  segment: number;
+  epoch: number;
+  parentCommit: string;
+  /** Frozen target identity (implemented-diff hash) captured before the run. */
+  targetSnapshotHash: string;
+  /** Protected benchmark script identity at measurement time. */
+  benchmarkHash: string;
+  /** Protected checks script identity at measurement time (null when absent). */
+  checksHash: string | null;
+  command: string;
+  startedAt: string;
+  finishedAt: string;
+  exitCode: number | null;
+  termination: "completed" | "timeout" | "aborted" | "process-error";
+  /** Authoritative metrics parsed from the benchmark's machine-readable output. */
+  metrics: Record<string, number>;
+  checks: {
+    required: boolean;
+    status: "pass" | "fail" | "not-run" | "error";
+    outputHash: string | null;
+  };
+  stale?: boolean;
+  staleReason?: string;
+}
+
+export type RunReceiptInput = Omit<RunReceipt, "v"> & { v?: 1 };
+
+/** Unique runner-owned run ID (`run-<uuid>`). Distinct from decision IDs. */
+export function newRunId(): string {
+  return `run-${crypto.randomUUID()}`;
+}
+
+function requireMetricsDict(value: unknown, field: string): Record<string, number> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw storeError("validation", `${field} must be an object mapping metric name to finite number`);
+  }
+  const out: Record<string, number> = {};
+  for (const [name, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry !== "number" || !Number.isFinite(entry)) {
+      throw storeError("validation", `${field}[${JSON.stringify(name)}] must be a finite number`);
+    }
+    out[name] = entry;
+  }
+  return out;
+}
+
+/** Validate and freeze a runner-owned run receipt. Throws `ControllerStoreError`. */
+export function buildRunReceipt(input: RunReceiptInput): RunReceipt {
+  assertSecretFreeRecord(input);
+  const termination = (input as Record<string, unknown>).termination;
+  if (termination !== "completed" && termination !== "timeout" && termination !== "aborted" && termination !== "process-error") {
+    throw storeError("validation", 'termination must be "completed", "timeout", "aborted", or "process-error"');
+  }
+  const checks = (input as Record<string, unknown>).checks;
+  if (checks === null || typeof checks !== "object" || Array.isArray(checks)) {
+    throw storeError("validation", "checks must be { required, status, outputHash }");
+  }
+  const checksRecord = checks as Record<string, unknown>;
+  const checksStatus = checksRecord.status;
+  if (checksStatus !== "pass" && checksStatus !== "fail" && checksStatus !== "not-run" && checksStatus !== "error") {
+    throw storeError("validation", 'checks.status must be "pass", "fail", "not-run", or "error"');
+  }
+  if (checksRecord.outputHash !== null && checksRecord.outputHash !== undefined &&
+    (typeof checksRecord.outputHash !== "string" || checksRecord.outputHash.length === 0)) {
+    throw storeError("validation", "checks.outputHash must be a non-empty string or null");
+  }
+  const decisionId = (input as Record<string, unknown>).decisionId;
+  if (decisionId !== null && (typeof decisionId !== "string" || decisionId.length === 0)) {
+    throw storeError("validation", "decisionId must be a non-empty string or null (explicit baseline exemption only)");
+  }
+  const exitCode = (input as Record<string, unknown>).exitCode;
+  if (exitCode !== null && exitCode !== undefined &&
+    (typeof exitCode !== "number" || !Number.isInteger(exitCode))) {
+    throw storeError("validation", "exitCode must be an integer or null");
+  }
+  const receipt: RunReceipt = {
+    v: CONTROLLER_STORE_VERSION,
+    runId: requireNonEmptyString(input.runId, "runId"),
+    decisionId: (decisionId as string | null) ?? null,
+    segment: requireNonNegativeInt(input.segment, "segment"),
+    epoch: requireNonNegativeInt(input.epoch, "epoch"),
+    parentCommit: requireNonEmptyString(input.parentCommit, "parentCommit"),
+    targetSnapshotHash: requireNonEmptyString(input.targetSnapshotHash, "targetSnapshotHash"),
+    benchmarkHash: requireNonEmptyString(input.benchmarkHash, "benchmarkHash"),
+    checksHash: input.checksHash === null || input.checksHash === undefined
+      ? null
+      : requireNonEmptyString(input.checksHash, "checksHash"),
+    command: requireNonEmptyString(input.command, "command"),
+    startedAt: requireNonEmptyString(input.startedAt, "startedAt"),
+    finishedAt: requireNonEmptyString(input.finishedAt, "finishedAt"),
+    exitCode: (exitCode as number | null) ?? null,
+    termination,
+    metrics: requireMetricsDict(input.metrics, "metrics"),
+    checks: {
+      required: checksRecord.required === true,
+      status: checksStatus,
+      outputHash: (checksRecord.outputHash as string | null) ?? null,
+    },
+  };
+  if (input.stale === true) {
+    receipt.stale = true;
+    if (typeof input.staleReason === "string" && input.staleReason.length > 0) {
+      receipt.staleReason = input.staleReason;
+    }
+  }
+  assertSecretFreeRecord(receipt);
+  return receipt;
+}
+
 // --- Journal events ---
 
 export type ControllerEvent =
   | { v: 1; kind: "decision"; eventId: string; at: string; record: DecisionRecord }
   | { v: 1; kind: "outcome"; eventId: string; at: string; record: OutcomeRecord }
-  | { v: 1; kind: "run_started"; eventId: string; at: string; decisionId: string; revision: RevisionSnapshot }
+  | { v: 1; kind: "run_started"; eventId: string; at: string; decisionId: string; revision: RevisionSnapshot; targetSnapshotHash?: string; command?: string }
+  | { v: 1; kind: "run_receipt"; eventId: string; at: string; receipt: RunReceipt }
+  | { v: 1; kind: "finalization_started"; eventId: string; at: string; decisionId: string; runId: string; status: string; patchHash: string; targetSnapshotHash: string }
   | { v: 1; kind: "benchmark_completed"; eventId: string; at: string; decisionId: string; patchHash: string }
   | { v: 1; kind: "decision_cancelled"; eventId: string; at: string; decisionId: string; segment: number; epoch: number; reason: string; newEvidenceRefs: string[] }
   | { v: 1; kind: "decision_discarded"; eventId: string; at: string; decisionId: string; reason: string }
@@ -656,6 +804,8 @@ const EVENT_KINDS = new Set([
   "decision",
   "outcome",
   "run_started",
+  "run_receipt",
+  "finalization_started",
   "benchmark_completed",
   "decision_cancelled",
   "decision_discarded",
@@ -1185,7 +1335,12 @@ export interface RecoveryResult {
 interface DecisionTrail {
   decision?: DecisionRecord;
   runStarted?: boolean;
+  /** Runner-owned receipt for the latest measured run (authoritative). */
+  receipt?: RunReceipt;
+  /** Legacy hash-only association (pre-receipt history, never proof of correctness). */
   benchmarkCompleted?: boolean;
+  /** Durable finalization intent for the latest finalization attempt. */
+  finalizationStarted?: { runId: string; status: string; patchHash: string; targetSnapshotHash: string };
   outcome?: boolean;
   cancelled?: { reason: string; segment: number; epoch: number };
   discarded?: string;
@@ -1215,6 +1370,22 @@ function foldJournal(events: ControllerEvent[]): { trails: Map<string, DecisionT
         break;
       case "run_started":
         trailFor(event.decisionId).runStarted = true;
+        break;
+      case "run_receipt": {
+        // Receipts are immutable and runner-owned: the latest receipt for a
+        // decision is its authoritative measurement. Baseline-exempt receipts
+        // (null decision) are keyed by run ID and never drive decisions.
+        const key = event.receipt.decisionId ?? event.receipt.runId;
+        trailFor(key).receipt = event.receipt;
+        break;
+      }
+      case "finalization_started":
+        trailFor(event.decisionId).finalizationStarted = {
+          runId: event.runId,
+          status: event.status,
+          patchHash: event.patchHash,
+          targetSnapshotHash: event.targetSnapshotHash,
+        };
         break;
       case "benchmark_completed":
         trailFor(event.decisionId).benchmarkCompleted = true;
@@ -1261,6 +1432,11 @@ function journalStateFor(trail: DecisionTrail | undefined): LifecycleState | und
   if (trail.newProposals && !trail.outcome && !trail.cancelled) return "needs_selection";
   if (trail.outcome) return "completed";
   if (trail.cancelled) return "cancelled";
+  // A runner-owned receipt is the authoritative completed measurement: the
+  // run awaits finalization. A legacy hash-only benchmark_completed without
+  // a receipt is preserved history but proves nothing (see the recovery note
+  // below and the log-time remeasurement gate).
+  if (trail.receipt) return "awaiting_log";
   if (trail.benchmarkCompleted) return "awaiting_log";
   if (trail.runStarted) return "running";
   return "selected";
@@ -1377,9 +1553,23 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
     break;
   }
 
-  // Upstream outcomes close decisions whose outcome append crashed.
+  // Upstream outcomes close decisions whose outcome append crashed — but
+  // only on the legacy path. With a durable finalization intent open (a
+  // `finalization_started` event without its outcome), the crash is
+  // reconciled by retrying log_experiment (verified Git work, deduplicated
+  // upstream row, exactly one outcome), never by inferring success: the
+  // retained/reverted tree was never verified.
+  const openIntentTrail = journalDecisionId ? trails.get(journalDecisionId) : undefined;
+  const hasOpenIntent = !!openIntentTrail?.finalizationStarted && !openIntentTrail.outcome;
   if (journalDecisionId && unjournaledUpstreamOutcomes.includes(journalDecisionId)) {
-    journalState = "completed";
+    if (hasOpenIntent) {
+      notes.push(
+        `upstream log has an outcome for ${journalDecisionId} with no journaled outcome, ` +
+        "but a finalization intent is still open: retry log_experiment to reconcile it (no success inferred)",
+      );
+    } else {
+      journalState = "completed";
+    }
   }
 
   // An epoch change invalidates live journal state too: pending work from an
@@ -1396,6 +1586,20 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
       );
       journalDecisionId = undefined;
       journalState = "needs_selection";
+    }
+  }
+
+  // Live work without a runner-owned receipt is interrupted/unknown: the
+  // process may have died before reporting, or the association predates
+  // receipts (legacy hash-only history). Keep requires remeasurement or an
+  // explicitly unsuccessful disposition — never inference from the tree.
+  if (journalDecisionId && (journalState === "running" || journalState === "awaiting_log")) {
+    const trail = trails.get(journalDecisionId);
+    if (trail && !trail.receipt) {
+      notes.push(
+        `decision ${journalDecisionId} has no runner-owned run receipt (interrupted/unknown): ` +
+        "rerun the experiment or record an explicitly unsuccessful disposition; keep requires remeasurement",
+      );
     }
   }
 
@@ -1535,9 +1739,88 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
   };
 }
 
-/** Count journaled cancellations for a segment (restart-safe cancellation cap input). */
-export function countCancellationsInSegment(workDir: string, segment: number): number {
+/**
+ * Latest runner-owned receipt journaled for a decision, if any. Receipts are
+ * immutable: later receipts supersede earlier ones without mutating them.
+ */
+export function findLatestReceiptForDecision(workDir: string, decisionId: string): RunReceipt | undefined {
   const { events } = readControllerEvents(workDir);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "run_receipt" && event.receipt.decisionId === decisionId) {
+      return event.receipt;
+    }
+  }
+  return undefined;
+}
+
+/** Runner-owned receipt journaled for a run ID, if any. */
+export function findReceiptByRunId(workDir: string, runId: string): RunReceipt | undefined {
+  const { events } = readControllerEvents(workDir);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "run_receipt" && event.receipt.runId === runId) {
+      return event.receipt;
+    }
+  }
+  return undefined;
+}
+
+export interface FinalizationIntent {
+  decisionId: string;
+  runId: string;
+  status: string;
+  patchHash: string;
+  targetSnapshotHash: string;
+}
+
+/** Latest durable finalization intent journaled for a run ID, if any. */
+export function findFinalizationIntent(workDir: string, runId: string): FinalizationIntent | undefined {
+  const { events } = readControllerEvents(workDir);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "finalization_started" && event.runId === runId) {
+      return {
+        decisionId: event.decisionId,
+        runId: event.runId,
+        status: event.status,
+        patchHash: event.patchHash,
+        targetSnapshotHash: event.targetSnapshotHash,
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Upstream `.auto/log.jsonl` row already linked to a run ID through
+ * `asi.controller_run_id`, if any. Used to deduplicate finalization retries
+ * after a crash between the log append and the outcome journal: a present
+ * row is reused, never appended twice.
+ */
+export function findUpstreamRowByRunId(workDir: string, runId: string): { run: number } | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(sessionFilePath(workDir, "log"), "utf-8");
+  } catch {
+    return undefined;
+  }
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (typeof entry.run !== "number" || !Number.isInteger(entry.run)) continue;
+    if (extractRunIdFromAsi(entry.asi) === runId) return { run: entry.run };
+  }
+  return undefined;
+}
+
+/** Count journaled cancellations for a segment (restart-safe cancellation cap input). */
+export function countCancellationsInSegment(workDir: string, segment: number): number {  const { events } = readControllerEvents(workDir);
   return events.filter((event) => event.kind === "decision_cancelled" && event.segment === segment).length;
 }
 

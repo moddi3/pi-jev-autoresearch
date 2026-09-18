@@ -221,7 +221,7 @@ test("prepareControllerRun requires a usable pending decision post-baseline", as
   }
 });
 
-test("prepareControllerRun rejects a second run while a log is pending", async () => {
+test("prepareControllerRun rejects a second run while a fresh log is pending", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "pi-runlog-twice-"));
   try {
     const lifecycle = new ControllerLifecycle(cwd, { sessionId: "s", worktree: cwd });
@@ -241,6 +241,7 @@ test("prepareControllerRun rejects a second run while a log is pending", async (
       readChangedPaths: () => [],
     });
     assert.equal(prepared.decisionId, "dec-1");
+    assert.match(prepared.frozenTargetHash, /^[0-9a-f]{64}$/);
     assert.equal(lifecycle.state, "running");
     // Duplicate run retries recover the same association.
     const retry = prepareControllerRun({
@@ -251,7 +252,38 @@ test("prepareControllerRun rejects a second run while a log is pending", async (
       readChangedPaths: () => [],
     });
     assert.equal(retry.decisionId, "dec-1");
+    // Legacy hash-only history requires remeasurement: the same decision may
+    // open a fresh run instead of logging the unproven association.
     lifecycle.recordBenchmark("dec-1", "patch-1");
+    const remeasure = prepareControllerRun({
+      workDir: cwd,
+      lifecycle,
+      hasBaseline: true,
+      readRevision: () => ({ ...revision }),
+      readChangedPaths: () => [],
+    });
+    assert.equal(remeasure.decisionId, "dec-1");
+    assert.match(remeasure.notices.join(" "), /remeasur/i);
+    assert.equal(lifecycle.state, "running");
+    // A fresh runner-owned receipt restores the back-to-back-run rejection.
+    lifecycle.recordRunReceipt({
+      runId: "run-fresh-1",
+      decisionId: "dec-1",
+      segment: 0,
+      epoch: 0,
+      parentCommit: record.parentCommit,
+      targetSnapshotHash: remeasure.frozenTargetHash,
+      benchmarkHash: record.benchmarkHash,
+      checksHash: null,
+      command: "test-command",
+      startedAt: new Date(0).toISOString(),
+      finishedAt: new Date(1).toISOString(),
+      exitCode: 0,
+      termination: "completed",
+      metrics: {},
+      checks: { required: false, status: "not-run", outputHash: null },
+    });
+    assert.equal(lifecycle.state, "awaiting_log");
     assert.throws(
       () =>
         prepareControllerRun({

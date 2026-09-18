@@ -68,6 +68,7 @@ import {
   controllerDecisionAsi,
   countCancellationsInSegment,
   extractDecisionIdFromAsi,
+  findLatestReceiptForDecision,
   freezePolicy,
   loadControllerPolicy,
   readControllerEvents,
@@ -76,6 +77,7 @@ import {
   type OutcomeRecord,
   type OutcomeRecordInput,
   type RevisionSnapshot,
+  type RunReceipt,
   type UpstreamOutcomeLink,
 } from "./store.ts";
 import type { ControllerConfig } from "./types.ts";
@@ -306,6 +308,20 @@ export function decideToolPreflight(input: PreflightInput): PreflightDecision {
   }
   if (isAlwaysAllowedPath(target)) {
     return { block: false };
+  }
+  // While a run executes or awaits finalization the measured target is
+  // frozen: ordinary mutation tools must not move it under the receipt.
+  // Unknown targets fail open above (the snapshot verification at log time
+  // is authoritative); a broad `bash` tool can still modify files, so the
+  // identity check remains even when this hook is correct.
+  if (input.lifecycleState === "running" || input.lifecycleState === "awaiting_log") {
+    return {
+      block: true,
+      reason:
+        `Target ${JSON.stringify(target)} is frozen while a measured run executes or awaits finalization ` +
+        `(lifecycle: ${input.lifecycleState}). Log the measured result with log_experiment (or rerun it) ` +
+        "before editing targets. Post-measurement edits invalidate the run receipt and require remeasurement.",
+    };
   }
   const approved = input.approvedPaths;
   if (approved === null) {
@@ -583,8 +599,7 @@ function fileHashHex(filePath: string): string | undefined {
  * explicit markers (never empty strings, never invented hashes): the
  * pre/post comparison still rejects any change during selection.
  */
-export function readSourceRevision(workDir: string): RevisionSnapshot {
-  let policyHash: string | undefined;
+export function readSourceRevision(workDir: string): RevisionSnapshot {  let policyHash: string | undefined;
   try {
     policyHash = adaptStoredPolicy(workDir)?.domainClauseHash;
   } catch {
@@ -596,6 +611,16 @@ export function readSourceRevision(workDir: string): RevisionSnapshot {
     benchmarkHash: fileHashHex(sessionFilePath(workDir, "measure")) ?? "no-benchmark",
     policyHash: policyHash ?? "no-policy-yet",
   };
+}
+
+/**
+ * Content hash of the protected checks script (`.auto/checks.sh`), or null
+ * when no checks script exists. Frozen into the run receipt so a keep can
+ * never rest on checks that changed after measurement; missing checks are
+ * never a pass.
+ */
+export function readChecksHash(workDir: string): string | null {
+  return fileHashHex(sessionFilePath(workDir, "checks")) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,12 +1141,14 @@ export function logSuspectedViolation(workDir: string, violation: SuspectedViola
 /**
  * Attach controller-owned decision identifiers to upstream ASI. The
  * controller-owned keys always win: an LLM-supplied copy is overwritten, so
- * the link can never be spoofed through `log_experiment` params.
+ * the link can never be spoofed through `log_experiment` params. The
+ * runner-owned `runId` binds the row to its run receipt for idempotent
+ * finalization retries.
  */
 export function attachControllerAsi(
   asi: Record<string, unknown> | undefined,
   decisionId: string,
-  extra: { segment: number; epoch: number },
+  extra: { segment: number; epoch: number; runId?: string },
 ): Record<string, unknown> {
   return { ...(asi ?? {}), ...controllerDecisionAsi(decisionId, extra) };
 }
@@ -1139,12 +1166,14 @@ export function buildLogOutcomeInput(input: {
   epoch: number;
   patchHash: string;
   metric: unknown;
+  metrics?: Record<string, number>;
   checksPass: boolean | null;
   status: "keep" | "discard" | "crash" | "checks_failed";
   postLogCommit: string;
+  runId?: string;
 }): OutcomeRecordInput {
   const metric = typeof input.metric === "number" && Number.isFinite(input.metric) ? input.metric : null;
-  return {
+  const outcome: OutcomeRecordInput = {
     decisionId: input.decisionId,
     run: input.run,
     segment: input.segment,
@@ -1155,6 +1184,11 @@ export function buildLogOutcomeInput(input: {
     result: input.status,
     postLogCommit: input.postLogCommit,
   };
+  if (input.runId !== undefined) (outcome as Record<string, unknown>).runId = input.runId;
+  if (input.metrics !== undefined) {
+    (outcome.measured as Record<string, unknown>).metrics = { ...input.metrics };
+  }
+  return outcome;
 }
 
 /**
@@ -1224,6 +1258,12 @@ function approvedScopeFor(lifecycle: ControllerLifecycle): string[] | null {
 
 export interface PreparedRun {
   decisionId: string;
+  /**
+   * Target snapshot hash frozen before measurement (implemented-diff
+   * identity). The post-benchmark receipt binds to this hash; any drift
+   * marks the receipt stale and requires remeasurement before retention.
+   */
+  frozenTargetHash: string;
   /** Work-dir-relative target paths outside the approved scope (journaled). */
   outOfScope: string[];
   /** Human-readable violation summaries, already journaled. */
@@ -1237,10 +1277,10 @@ export interface PreparedRun {
  * they are exempt and proceed without any linkage. Otherwise verifies the
  * base commit and content hashes (target edits are expected, so dirtiness is
  * never compared), rechecks allowed paths, journals suspected violations
- * best-effort, and opens the `selected -> running` association (idempotent
- * for duplicate tool retries). Throws `ControllerStoreError` or
- * `LifecycleTransitionError` with LLM-actionable guidance when the run must
- * not measure.
+ * best-effort, freezes the target snapshot for patch binding, and opens the
+ * `selected -> running` association (idempotent for duplicate tool retries).
+ * Throws `ControllerStoreError` or `LifecycleTransitionError` with
+ * LLM-actionable guidance when the run must not measure.
  */
 export function prepareControllerRun(deps: {
   workDir: string;
@@ -1271,11 +1311,30 @@ export function prepareControllerRun(deps: {
     );
   }
   if (state === "awaiting_log") {
-    throw new ControllerStoreError(
-      "validation",
-      `decision ${pending.decisionId} already has a measured run awaiting log_experiment. ` +
-        "Log it before running again — back-to-back runs without logging are rejected.",
-    );
+    // A fresh receipt never permits a back-to-back run. But when the latest
+    // measurement is unusable — stale receipt, moved tree, or no receipt at
+    // all — the same decision must be able to remeasure instead of logging
+    // an invalidated result; the fresh receipt supersedes the old one.
+    const latestReceipt = findLatestReceiptForDecision(workDir, pending.decisionId);
+    const currentHash = readTargetPatchHash(workDir, deps.readChangedPaths());
+    const needsRemeasure =
+      !latestReceipt || latestReceipt.stale === true || currentHash !== latestReceipt.targetSnapshotHash;
+    if (!needsRemeasure) {
+      throw new ControllerStoreError(
+        "validation",
+        `decision ${pending.decisionId} already has a measured run awaiting log_experiment. ` +
+          "Log it before running again — back-to-back runs without logging are rejected.",
+      );
+    }
+    const revision = deps.readRevision();
+    assertRevisionFresh(pending.revision, revision);
+    lifecycle.rerunMeasurement(pending.decisionId, revision, { targetSnapshotHash: currentHash });
+    return {
+      decisionId: pending.decisionId,
+      frozenTargetHash: currentHash,
+      outOfScope: [],
+      notices: ["remeasuring an invalidated measurement under the same decision; the fresh receipt supersedes the old one"],
+    };
   }
   if (state !== "selected" && state !== "running") {
     throw new ControllerStoreError(
@@ -1319,8 +1378,21 @@ export function prepareControllerRun(deps: {
 
   // Rejects a changed base source loudly; target edits stay expected.
   assertRevisionFresh(pending.revision, revision);
-  lifecycle.beginRun(pending.decisionId, revision);
-  return { decisionId: pending.decisionId, outOfScope, notices };
+  // Freeze the target snapshot before measurement: the receipt binds the
+  // measured result to exactly this patch. Journaled with the association so
+  // the binding survives restarts.
+  let frozenTargetHash: string;
+  try {
+    frozenTargetHash = readTargetPatchHash(workDir, preChangedPaths);
+  } catch (cause) {
+    throw new ControllerStoreError(
+      "io",
+      `decision ${pending.decisionId} cannot freeze its target snapshot: ` +
+        `${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+  lifecycle.beginRun(pending.decisionId, revision, { targetSnapshotHash: frozenTargetHash });
+  return { decisionId: pending.decisionId, frozenTargetHash, outOfScope, notices };
 }
 
 export interface PreparedLog {
@@ -1331,16 +1403,29 @@ export interface PreparedLog {
   augmentedAsi: Record<string, unknown>;
   /** True when the benchmark association was recovered at log time. */
   recoveredAssociation: boolean;
+  /** Runner-owned receipt authorizing this log (absent for exempt/legacy paths). */
+  receipt?: RunReceipt;
+  /** Receipt run ID for finalization intent + upstream dedupe (absent when none). */
+  runId?: string;
   notices: string[];
 }
 
 /**
  * Prepare a post-baseline `log_experiment` to complete its run association.
+ *
  * Returns `null` for baseline logs (no pending decision and no segment
- * results yet). Attaches controller-owned ASI (controller keys win) and, when
- * the benchmark association was missed — e.g. a crash between measurement
- * and its journal append — recovers it from the current tree before the
- * runner lifecycle runs. Throws with LLM-actionable guidance otherwise.
+ * results yet). Attaches controller-owned ASI (controller keys win).
+ *
+ * Receipt authority (review R1/R2): with a pending decision past the
+ * baseline, keep requires a runner-owned receipt whose frozen target
+ * snapshot still matches the current tree, whose authoritative primary
+ * metric equals the agent-supplied metric, and whose termination/checks
+ * status permits retention. Without a valid receipt, keep is rejected as
+ * interrupted/unknown (rerun, or record an explicitly unsuccessful
+ * disposition); legacy hash-only history requires remeasurement before
+ * retention. Missing required checks are never a pass.
+ *
+ * Throws with LLM-actionable guidance otherwise.
  */
 export function prepareControllerLog(deps: {
   workDir: string;
@@ -1350,6 +1435,16 @@ export function prepareControllerLog(deps: {
   readRevision: () => RevisionSnapshot;
   readChangedPaths: () => string[];
   readPatchHash: (changedPaths: string[]) => string;
+  /** Agent's intended log status (absent preserves the legacy allowance). */
+  status?: "keep" | "discard" | "crash" | "checks_failed";
+  /** Agent-supplied primary metric for receipt authority comparison. */
+  metric?: unknown;
+  /** Agent-supplied secondary metrics for receipt authority comparison. */
+  metrics?: Record<string, number>;
+  /** Session primary metric name indexing the receipt's authoritative metrics. */
+  metricName?: string;
+  /** In-memory checks result for this session (null after a restart). */
+  checksPass?: boolean | null;
 }): PreparedLog | null {
   const { workDir, lifecycle, hasBaseline } = deps;
   lifecycle.recover({ upstreamOutcomes: readUpstreamOutcomeLinks(workDir) });
@@ -1391,6 +1486,29 @@ export function prepareControllerLog(deps: {
     );
   }
 
+  const receipt = findLatestReceiptForDecision(workDir, pending.decisionId);
+  if (receipt) {
+    return prepareReceiptBackedLog(deps, pending, state, receipt);
+  }
+
+  // No runner-owned receipt: the run is interrupted/unknown (crash before
+  // the benchmark reported, or legacy hash-only history). Keep never
+  // follows — rerun the experiment or record an explicitly unsuccessful
+  // disposition. Legacy associations are preserved history, not proof.
+  if (deps.hasBaseline && deps.status === "keep") {
+    const legacy = findBenchmarkPatchHash(workDir, pending.decisionId) !== undefined;
+    throw new ControllerStoreError(
+      "validation",
+      `decision ${pending.decisionId} has no runner-owned run receipt (interrupted/unknown run). ` +
+        (legacy
+          ? "Its hash-only history predates receipts and requires remeasurement before retention. "
+          : "The benchmark never reported a completed measurement. ") +
+        "Rerun the selected experiment with run_experiment, then log the measured result — " +
+        "or record an explicitly unsuccessful disposition (discard, crash, or checks_failed). " +
+        "Keep is rejected: success is never inferred from the working tree.",
+    );
+  }
+
   let patchHash = findBenchmarkPatchHash(workDir, pending.decisionId);
   let recoveredAssociation = false;
   const notices: string[] = [];
@@ -1425,6 +1543,155 @@ export function prepareControllerLog(deps: {
 }
 
 /**
+ * Receipt-backed log preparation: verify the frozen target snapshot against
+ * the current tree (pre-finalization check), enforce metric/checks
+ * authority for keep, and bind the finalization to the receipt run ID.
+ */
+function prepareReceiptBackedLog(
+  deps: {
+    workDir: string;
+    lifecycle: ControllerLifecycle;
+    asi: Record<string, unknown> | undefined;
+    readChangedPaths: () => string[];
+    readPatchHash: (changedPaths: string[]) => string;
+    status?: "keep" | "discard" | "crash" | "checks_failed";
+    metric?: unknown;
+    metrics?: Record<string, number>;
+    metricName?: string;
+    checksPass?: boolean | null;
+  },
+  pending: { decisionId: string; segment: number; epoch: number },
+  state: LifecycleState,
+  receipt: RunReceipt,
+): PreparedLog {
+  const notices: string[] = [];
+  const currentHash = deps.readPatchHash(deps.readChangedPaths());
+  const treeMoved = currentHash !== receipt.targetSnapshotHash;
+
+  if (receipt.stale) {
+    if (deps.status === "keep") {
+      throw new ControllerStoreError(
+        "validation",
+        `decision ${pending.decisionId} cannot keep: its run receipt ${receipt.runId} is stale ` +
+          `(${receipt.staleReason ?? "the target changed after measurement"}). ` +
+          "Remeasure the current patch with run_experiment, then log the new result.",
+      );
+    }
+    notices.push(`proceeding with a stale receipt (${receipt.staleReason ?? "target changed after measurement"}) for an unsuccessful disposition`);
+  } else if (treeMoved) {
+    // Pre-finalization verification: a post-measure edit invalidates the
+    // binding between the measured patch and the retained patch.
+    if (deps.status === "keep") {
+      throw new ControllerStoreError(
+        "validation",
+        `decision ${pending.decisionId} cannot keep: the target changed after measurement ` +
+          `(receipt ${receipt.runId} binds patch ${receipt.targetSnapshotHash.slice(0, 12)}, ` +
+          `current tree is ${currentHash.slice(0, 12)}). ` +
+          "Remeasure the current patch with run_experiment, then log the new result.",
+      );
+    }
+    notices.push("target changed after measurement; proceeding for an unsuccessful disposition only");
+  }
+
+  if (deps.status === "keep") {
+    assertReceiptKeepEligible(receipt, pending.decisionId, deps);
+  }
+
+  return {
+    decisionId: pending.decisionId,
+    segment: pending.segment,
+    epoch: pending.epoch,
+    patchHash: treeMoved || receipt.stale ? currentHash : receipt.targetSnapshotHash,
+    augmentedAsi: attachControllerAsi(deps.asi, pending.decisionId, {
+      segment: pending.segment,
+      epoch: pending.epoch,
+      runId: receipt.runId,
+    }),
+    recoveredAssociation: treeMoved || receipt.stale || state === "running",
+    receipt,
+    runId: receipt.runId,
+    notices,
+  };
+}
+
+/**
+ * Keep eligibility from the authoritative receipt: the process must have
+ * completed cleanly, agent-supplied metrics must match authoritative fields,
+ * and required checks must have passed (missing checks are never a pass).
+ */
+function assertReceiptKeepEligible(
+  receipt: RunReceipt,
+  decisionId: string,
+  deps: {
+    workDir: string;
+    metric?: unknown;
+    metrics?: Record<string, number>;
+    metricName?: string;
+    checksPass?: boolean | null;
+  },
+): void {
+  if (receipt.termination !== "completed" || receipt.exitCode !== 0) {
+    throw new ControllerStoreError(
+      "validation",
+      `decision ${decisionId} cannot keep: its run receipt ${receipt.runId} records ` +
+        `termination ${JSON.stringify(receipt.termination)} with exit code ${String(receipt.exitCode)}. ` +
+        "Log an unsuccessful disposition (crash) or rerun the experiment.",
+    );
+  }
+  const metricName = deps.metricName;
+  if (typeof metricName === "string" && metricName.length > 0) {
+    const authoritative = receipt.metrics[metricName];
+    if (typeof authoritative === "number" && typeof deps.metric === "number" && Number.isFinite(deps.metric)) {
+      if (deps.metric !== authoritative) {
+        throw new ControllerStoreError(
+          "validation",
+          `decision ${decisionId} cannot keep: the reported metric ${deps.metric} mismatches ` +
+            `the authoritative receipt value ${authoritative} for ${JSON.stringify(metricName)} ` +
+            `(receipt ${receipt.runId}). Use the runner-reported value or rerun the experiment.`,
+        );
+      }
+    }
+    if (deps.metrics !== undefined) {
+      for (const [name, value] of Object.entries(deps.metrics)) {
+        const expected = receipt.metrics[name];
+        if (typeof expected === "number" && typeof value === "number" && value !== expected) {
+          throw new ControllerStoreError(
+            "validation",
+            `decision ${decisionId} cannot keep: reported metrics[${JSON.stringify(name)}]=${value} mismatches ` +
+              `the authoritative receipt value ${expected} (receipt ${receipt.runId}).`,
+          );
+        }
+      }
+    }
+  }
+  if (receipt.checks.required) {
+    if (receipt.checks.status !== "pass") {
+      throw new ControllerStoreError(
+        "validation",
+        `decision ${decisionId} cannot keep: required correctness checks did not pass ` +
+          `(receipt ${receipt.runId} records checks ${JSON.stringify(receipt.checks.status)}). ` +
+          "Log as 'checks_failed' instead. Missing checks are never a pass.",
+      );
+    }
+    const currentChecksHash = readChecksHash(deps.workDir);
+    if (currentChecksHash !== receipt.checksHash) {
+      throw new ControllerStoreError(
+        "validation",
+        `decision ${decisionId} cannot keep: the checks script changed after measurement ` +
+          `(receipt ${receipt.runId}). Remeasure with the current checks, then log.`,
+      );
+    }
+  }
+  if (deps.checksPass === false) {
+    throw new ControllerStoreError(
+      "validation",
+      `decision ${decisionId} cannot keep: the session checks failed. ` +
+        "Log as 'checks_failed' instead. Jev never overrides a failing test.",
+    );
+  }
+}
+
+/**
  * Journal the controller outcome and free the single-use slot, strictly after
  * the existing runner lifecycle (commit/revert + upstream log write)
  * succeeded. Terminal `completed` becomes `needs_selection` immediately so
@@ -1439,9 +1706,11 @@ export function completeControllerLog(deps: {
   epoch: number;
   patchHash: string;
   metric: unknown;
+  metrics?: Record<string, number>;
   checksPass: boolean | null;
   status: "keep" | "discard" | "crash" | "checks_failed";
   postLogCommit: string;
+  runId?: string;
 }): OutcomeRecord {
   const outcome = deps.lifecycle.completeLog(buildLogOutcomeInput(deps));
   deps.lifecycle.acknowledge();

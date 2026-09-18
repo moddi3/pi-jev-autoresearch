@@ -55,7 +55,7 @@ Resume semantics:
 2. **Draft the question plan** (first `select_experiment` only): pass a `policyDraft` with a short domain-specific selection clause and optional atomic diagnostic questions. It freezes for the segment in `.auto/controller/policy.json`; later calls omit it or reproduce it byte-identically. A mid-segment rewrite is rejected; a changed objective/policy starts a new epoch and invalidates pending decisions (history preserved).
 3. **Propose** 2–4 diverse concrete candidates per call, referencing only known evidence ids (`run-<n>`, `benchmark-script`, `experiment-prompt`).
 4. **Implement ONLY** the selected experiment within its approved `filesToChange` and frozen outline.
-5. **Run, then log** for the same pending decision. Post-baseline runs without a usable pending decision are rejected with repair guidance. A `remeasure` candidate (no file changes) is the selection path for confirming existing code.
+5. **Run, then log** for the same pending decision. Post-baseline runs without a usable pending decision are rejected with repair guidance. A `remeasure` candidate (no file changes) is the selection path for confirming existing code. The measured target is frozen at run start: edits while a run executes or awaits finalization invalidate the run receipt, and `keep` requires remeasuring the current patch.
 6. **Infeasible?** `cancel_selection` with the pending decision id, a concrete reason, and new evidence refs. Capped per segment; exceeding the cap pauses instead of re-asking.
 
 ## Inspect why a candidate was selected
@@ -71,7 +71,7 @@ Every decision is journaled before it becomes usable, under the effective work d
   quarantine/    # torn trailing journal lines, preserved for inspection
 ```
 
-A decision record carries session, worktree, segment, epoch, proposal round, parent commit, history/benchmark/policy hashes, accepted + rejected candidates with reasons, the exact selector input (and its hash), selected id, probabilities, confidence, model versions, usage, timing, and error/fallback status. Outcomes link back via controller-owned `asi.controller_decision_id` (plus segment/epoch) — controller keys overwrite any LLM-supplied copy, so the link cannot be spoofed.
+A decision record carries session, worktree, segment, epoch, proposal round, parent commit, history/benchmark/policy hashes, accepted + rejected candidates with reasons, the exact selector input (and its hash), selected id, probabilities, confidence, model versions, usage, timing, and error/fallback status. Outcomes link back via controller-owned `asi.controller_decision_id` (plus segment/epoch) and the runner-owned `asi.controller_run_id` — controller keys overwrite any LLM-supplied copy, so the link cannot be spoofed.
 
 To answer "why was candidate X selected": read that decision's record in `events.jsonl` — selector input hash, probability distribution, confidence, and the frozen question plan in `policy.json`. The full journal is never injected into compaction; read individual records only when needed.
 
@@ -91,7 +91,7 @@ Invalidation / preservation behavior:
 | Provider failure / cancel cap | preserved | **paused** visibly | Explicit operator resume required (`/autoresearch controller resume`); no silent LLM fallback; resume journals durable `controller_resumed` |
 | Operator resume | preserved (append-only; budgets intact) | **resumed** (`needs_selection`, or restored `running`/`awaiting_log` for finalization) | Stale selected work invalidated terminally; measured work preserved unless `controller resume abandon` |
 
-A torn trailing journal line is quarantined (bytes preserved, tail truncated); corruption anywhere else errors loudly instead of inventing state. A crash between `log_experiment` and the outcome append is closed from the upstream link on recovery.
+A torn trailing journal line is quarantined (bytes preserved, tail truncated); corruption anywhere else errors loudly instead of inventing state. Every post-baseline measurement persists an immutable runner-owned run receipt (run ID, frozen target snapshot, authoritative metrics, termination/checks status) before the result is exposed; `keep` requires a receipt whose snapshot still matches the tree and whose metrics/checks authorize retention — agent-supplied values that mismatch are rejected, and recovery without a receipt marks the run interrupted/unknown (rerun, or an explicitly unsuccessful disposition). Keep/discard finalization runs through a durable write-ahead intent (`finalization_started`): Git work is verified, the upstream row is deduplicated by run ID, and exactly one outcome links the run. Git/log I/O failures pause recoverably instead of succeeding with a warning. A legacy crash between `log_experiment` and the outcome append with no open intent is still closed from the upstream link on recovery; with an intent open, the retry reconciles instead of inferring success.
 
 ## Credentials and logging
 
