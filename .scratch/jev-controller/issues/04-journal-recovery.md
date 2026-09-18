@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Controller contracts and opt-in config with off-mode parity).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Plan source:** AGENT_HANDOFF.md §9.
 
