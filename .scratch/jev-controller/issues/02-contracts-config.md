@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Pin upstream baseline and record pre-change suite).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Plan source:** AGENT_HANDOFF.md §5 (architecture, file map, suggested configuration).
 

@@ -53,6 +53,7 @@ import {
 } from "./compaction.ts";
 import { resolveAutoresearchShortcuts, SHORTCUT_ACTIONS } from "./shortcuts.ts";
 import { sessionFilePath, sessionFileCandidates, ensureParentDir, AUTO_DIR } from "./paths.ts";
+import { loadControllerResolution } from "./controller/config.ts";
 
 // ---------------------------------------------------------------------------
 // Experiment output limits (sent to LLM — keep small to save context)
@@ -464,6 +465,11 @@ function currentResults(results: ExperimentResult[], segment: number): Experimen
 interface AutoresearchConfig {
   maxIterations?: number;
   workingDir?: string;
+  /**
+   * Opt-in Jev controller settings (ticket 02). Absent or `{ mode: "off" }`
+   * leaves behavior unchanged; validated by `controller/config.ts`.
+   */
+  controller?: unknown;
 }
 
 /** Read the config file (.auto/config.json, legacy autoresearch.config.json) from the given directory (always ctx.cwd) */
@@ -1525,6 +1531,25 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     const runtime = getRuntime(ctx);
     if (!runtime.autoresearchMode) return;
 
+    // Jev controller opt-in (ticket 02 wiring only — no selection tools yet).
+    // Absent/off resolves to nothing here, keeping the prompt byte-identical
+    // to baseline. Invalid enabled config fails loudly instead of silently
+    // running without Jev direction.
+    let controllerExtra = "";
+    try {
+      loadControllerResolution(ctx.cwd);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (ctx.hasUI) {
+        ctx.ui.notify(`Jev controller config error: ${message}`, "error");
+      }
+      controllerExtra =
+        "\n\n## Jev Controller Config ERROR" +
+        "\nThe opt-in controller configuration is invalid, so Jev selection is NOT active." +
+        " Fix the \"controller\" section of .auto/config.json before relying on Jev direction." +
+        `\nError: ${message}`;
+    }
+
     const workDir = resolveWorkDir(ctx.cwd);
     const mdPath = autoresearchMdPath(workDir);
     const ideasPath = autoresearchIdeasPath(workDir);
@@ -1557,7 +1582,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     }
 
     return {
-      systemPrompt: event.systemPrompt + extra,
+      systemPrompt: event.systemPrompt + extra + controllerExtra,
     };
   });
 
