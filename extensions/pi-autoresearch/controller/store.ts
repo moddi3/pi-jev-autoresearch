@@ -642,6 +642,7 @@ export type ControllerEvent =
   | { v: 1; kind: "decision_discarded"; eventId: string; at: string; decisionId: string; reason: string }
   | { v: 1; kind: "new_proposals"; eventId: string; at: string; decisionId: string; segment: number; epoch: number; reason: string }
   | { v: 1; kind: "controller_paused"; eventId: string; at: string; reason: string; decisionId?: string }
+  | { v: 1; kind: "controller_resumed"; eventId: string; at: string; reason: string }
   | { v: 1; kind: "suspected_violation"; eventId: string; at: string; reason: string; decisionId?: string; detail?: string }
   | { v: 1; kind: "policy_frozen"; eventId: string; at: string; policyHash: string; version: number; epoch: number; segment: number }
   | { v: 1; kind: "pending_invalidated"; eventId: string; at: string; decisionId?: string; reason: string };
@@ -660,6 +661,7 @@ const EVENT_KINDS = new Set([
   "decision_discarded",
   "new_proposals",
   "controller_paused",
+  "controller_resumed",
   "policy_frozen",
   "pending_invalidated",
   "suspected_violation",
@@ -1187,6 +1189,8 @@ interface DecisionTrail {
   outcome?: boolean;
   cancelled?: { reason: string; segment: number; epoch: number };
   discarded?: string;
+  /** Operator resume invalidated the pending association (terminal, never rebuilt). */
+  invalidated?: string;
   /** `request_new_candidates` superseded for a new proposal round (no pending work). */
   newProposals?: { reason: string; segment: number; epoch: number };
   order: number;
@@ -1235,9 +1239,14 @@ function foldJournal(events: ControllerEvent[]): { trails: Map<string, DecisionT
           epoch: event.epoch,
         };
         break;
-      case "controller_paused":
-      case "policy_frozen":
       case "pending_invalidated":
+        // Terminal for that pending association: ordered reduction below
+        // never rebuilds it, even if a stale snapshot copy resurfaces.
+        if (event.decisionId) trailFor(event.decisionId).invalidated = event.reason;
+        break;
+      case "controller_paused":
+      case "controller_resumed":
+      case "policy_frozen":
       case "suspected_violation":
         break;
     }
@@ -1248,6 +1257,7 @@ function foldJournal(events: ControllerEvent[]): { trails: Map<string, DecisionT
 function journalStateFor(trail: DecisionTrail | undefined): LifecycleState | undefined {
   if (!trail?.decision) return undefined;
   if (trail.discarded) return "needs_selection";
+  if (trail.invalidated && !trail.outcome && !trail.cancelled) return "needs_selection";
   if (trail.newProposals && !trail.outcome && !trail.cancelled) return "needs_selection";
   if (trail.outcome) return "completed";
   if (trail.cancelled) return "cancelled";
@@ -1353,6 +1363,14 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
       notes.push(`decision ${decisionId} was superseded for a new proposal round (${trail.newProposals.reason}); not usable`);
       break;
     }
+    if (trail.invalidated && !trail.outcome && !trail.cancelled) {
+      // An invalidated pending association is terminal: it never reappears
+      // from older journal entries, even if a stale snapshot copy resurfaces.
+      journalDecisionId = undefined;
+      journalState = "needs_selection";
+      notes.push(`decision ${decisionId} was invalidated on resume (${trail.invalidated}); not usable`);
+      break;
+    }
     journalDecisionId = decisionId;
     const derived = journalStateFor(trail);
     journalState = derived ?? "needs_selection";
@@ -1381,30 +1399,34 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
     }
   }
 
-  // A pause marker is global, not per-decision: it overlays the derived
-  // state while preserving the pending decision for inspection.
-  let pausedOverlay = false;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]!;
-    if (event.kind === "controller_paused") {
-      pausedOverlay = true;
-      break;
-    }
-    if (
-      event.kind === "decision" ||
-      event.kind === "run_started" ||
-      event.kind === "benchmark_completed" ||
-      event.kind === "outcome" ||
-      event.kind === "decision_cancelled" ||
-      event.kind === "decision_discarded" ||
-      event.kind === "new_proposals"
-    ) {
-      break;
-    }
+  // Pause is a global marker reduced in journal order: the latest marker
+  // wins, so a durable `controller_resumed` event clears an earlier pause
+  // across restarts. Without any resume, an earlier pause still holds.
+  let paused = false;
+  for (const event of events) {
+    if (event.kind === "controller_paused") paused = true;
+    else if (event.kind === "controller_resumed") paused = false;
   }
 
   let state: LifecycleState = journalState;
   let pendingRebuilt = false;
+
+  // A snapshot copy naming an invalidated decision (stale crash residue) is
+  // discarded with a precise note instead of being resurrected.
+  if (snapshot) {
+    const trail = trails.get(snapshot.decisionId);
+    if (trail?.invalidated && !trail.outcome && !trail.cancelled) {
+      pendingDiscardedReason =
+        `pending decision ${snapshot.decisionId} invalidated on resume (${trail.invalidated}); discarded`;
+      notes.push(pendingDiscardedReason);
+      try {
+        clearPendingSnapshot(workDir);
+      } catch {
+        // Best effort.
+      }
+      snapshot = undefined;
+    }
+  }
 
   if (snapshot && journalDecisionId && snapshot.decisionId !== journalDecisionId) {
     // The snapshot names an older decision while the journal moved on
@@ -1480,7 +1502,12 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
     state = journalState;
   }
 
-  if (pausedOverlay && (state === "selected" || state === "running" || state === "awaiting_log" || state === "needs_selection")) {
+  // A journaled pause overlays every derived state until a durable
+  // `controller_resumed` event clears it in order. Terminal outcomes do not
+  // clear it: a pause journaled after a completion/cancellation still stops
+  // automatic continuation until the operator resumes. Pending artifacts are
+  // preserved for inspection (terminal states carry none).
+  if (paused) {
     notes.push("controller paused; pending artifacts preserved until resume");
     return {
       state: "paused",
@@ -1512,4 +1539,25 @@ export function recoverControllerState(workDir: string, opts: RecoverOptions = {
 export function countCancellationsInSegment(workDir: string, segment: number): number {
   const { events } = readControllerEvents(workDir);
   return events.filter((event) => event.kind === "decision_cancelled" && event.segment === segment).length;
+}
+
+/**
+ * True while the controller is paused (ordered journal reduction: the
+ * latest pause/resume marker wins). Fails closed: an unreadable journal
+ * reports paused so no automatic continuation runs on corrupt storage.
+ * Pure read except for torn-tail quarantine, which keeps later appends clean.
+ */
+export function isControllerPaused(workDir: string): boolean {
+  let events;
+  try {
+    events = readControllerEvents(workDir).events;
+  } catch {
+    return true;
+  }
+  let paused = false;
+  for (const event of events) {
+    if (event.kind === "controller_paused") paused = true;
+    else if (event.kind === "controller_resumed") paused = false;
+  }
+  return paused;
 }

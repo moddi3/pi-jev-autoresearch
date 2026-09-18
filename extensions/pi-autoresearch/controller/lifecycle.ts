@@ -9,7 +9,9 @@
  * selected --request_new_candidates--> needs_selection (new proposal round,
  *   journaled `new_proposals` event; history preserved, snapshot cleared)
  * completed/cancelled --acknowledge--> needs_selection
- * paused --resume--> needs_selection
+ * paused --operator resume--> needs_selection (stale selected work invalidated)
+ * paused --operator resume--> running|awaiting_log (measured-but-unfinalized
+ *   work restored for finalization; `abandonMeasuredRun` invalidates instead)
  * needs_selection --begin_baseline--> baseline --baseline_completed/failed--> needs_selection
  * ```
  *
@@ -131,6 +133,17 @@ export interface CancelSelectionResult {
   decisionId: string;
   /** True when the segment cancellation cap forced a pause on top of the cancel. */
   pausedForCap: boolean;
+}
+
+/** Options for the explicit operator resume (`/autoresearch controller resume`). */
+export interface ResumeControllerOptions {
+  /**
+   * Deliberately abandon measured-but-unfinalized work (`running` /
+   * `awaiting_log` pending): the pending association is invalidated instead
+   * of preserved for finalization. Without this flag, resume restores such
+   * work to its live state so it must be finalized, never silently erased.
+   */
+  abandonMeasuredRun?: boolean;
 }
 
 export interface RunAssociation {
@@ -393,20 +406,51 @@ export class ControllerLifecycle {
     this.currentState = next;
   }
 
-  /** paused -> needs_selection. History is preserved; stale pending work is invalidated. */
-  resumeController(): void {
+  /**
+   * paused -> needs_selection via the explicit operator resume command
+   * (`/autoresearch controller resume`). Always journals a durable
+   * `controller_resumed` event so ordered journal reduction stays resumed
+   * across restarts; the LLM has no resume path (it is a slash command, not
+   * a tool), so provider failures and cancellation caps cannot be unpaused
+   * except by the operator.
+   *
+   * Stale pending work (selected, never measured) is invalidated: a
+   * `pending_invalidated` event marks that association terminal and the
+   * snapshot is cleared, so recovery never resurrects it.
+   *
+   * Measured-but-unfinalized work (`running` / `awaiting_log` pending) is
+   * never silently erased: without `abandonMeasuredRun` it is restored to
+   * its live state for finalization (log it next); with the flag it is
+   * deliberately abandoned (invalidated with an abandon reason).
+   * History and budgets are preserved either way: resume only appends.
+   */
+  resumeController(opts: ResumeControllerOptions = {}): void {
     const from = this.currentState;
     if (from !== "paused") throw new LifecycleTransitionError(from, "resume");
+    const pendingState = this.pending?.state;
+    const measured = pendingState === "running" || pendingState === "awaiting_log";
+    if (this.pending && measured && !opts.abandonMeasuredRun) {
+      appendControllerEvent(this.workDir, {
+        v: 1,
+        kind: "controller_resumed",
+        reason: `operator resume preserves measured-but-unfinalized ${pendingState} work for decision ${this.pending.decisionId}; finalize it with log_experiment`,
+      });
+      this.currentState = pendingState;
+      return;
+    }
     if (this.pending) {
       appendControllerEvent(this.workDir, {
         v: 1,
         kind: "pending_invalidated",
         decisionId: this.pending.decisionId,
-        reason: "operator resume invalidates stale pending work",
+        reason: measured
+          ? `operator resume deliberately abandoned unfinalized ${pendingState} work`
+          : "operator resume invalidates stale pending work",
       });
       clearPendingSnapshot(this.workDir);
       this.pending = undefined;
     }
+    appendControllerEvent(this.workDir, { v: 1, kind: "controller_resumed", reason: "operator resume" });
     this.currentState = "needs_selection";
   }
 

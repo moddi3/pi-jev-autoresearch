@@ -14,7 +14,9 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { sessionFilePath } from "../paths.ts";
+import { controllerDir, sha256Hex, stableStringify } from "./store.ts";
 import type { ControllerConfig, ControllerResolution } from "./types.ts";
 
 /** Process-environment variable (or secret mechanism) holding the API key. */
@@ -207,20 +209,47 @@ const CONTROLLER_FIELD_VALIDATORS: Record<string, (value: unknown) => unknown> =
 
 /**
  * Read `.auto/config.json` from `ctxCwd` and resolve its `controller` section.
- * A missing or unparseable file resolves to disabled, matching the existing
- * config-file convention; an explicitly invalid `controller` section throws.
+ *
+ * Three explicit outcomes, never silent:
+ * - missing file, or valid JSON without a `controller` section, resolves to
+ *   disabled (absent/off parity with upstream behavior);
+ * - an explicitly invalid `controller` section throws `ControllerConfigError`;
+ * - malformed JSON, an unreadable file, or a non-object document throws
+ *   `ControllerConfigError` instead of resolving to disabled: broken
+ *   configuration is an error, never evidence of operator intent to turn the
+ *   controller off. Callers that need the frozen-identity rule (an enabled
+ *   session whose config vanishes must pause, not downgrade) use
+ *   `loadControllerGate`, which layers that check on top.
  */
 export function loadControllerResolution(ctxCwd: string): ControllerResolution {
-  let parsed: unknown;
+  let text: string;
   try {
     const configPath = sessionFilePath(ctxCwd, "config");
     if (!fs.existsSync(configPath)) return { enabled: false, mode: "off" };
-    parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  } catch {
-    return { enabled: false, mode: "off" };
+    text = fs.readFileSync(configPath, "utf-8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return { enabled: false, mode: "off" };
+    }
+    throw new ControllerConfigError(
+      "controller",
+      `configuration is inaccessible (${cause instanceof Error ? cause.message : String(cause)}); fix or remove .auto/config.json explicitly`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (cause) {
+    throw new ControllerConfigError(
+      "controller",
+      `configuration is not valid JSON (${cause instanceof Error ? cause.message : String(cause)}); fix .auto/config.json instead of running uncontrolled`,
+    );
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { enabled: false, mode: "off" };
+    throw new ControllerConfigError(
+      "controller",
+      "configuration must be a JSON object with an optional \"controller\" section",
+    );
   }
   return resolveControllerConfig((parsed as Record<string, unknown>).controller);
 }
@@ -234,4 +263,173 @@ export function loadControllerResolution(ctxCwd: string): ControllerResolution {
 export function readControllerApiKey(env: Record<string, string | undefined> = process.env): string | undefined {
   const value = env[CONTROLLER_ENV_KEY];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Fail-closed gate: off / enabled / configuration-error through one shared
+// resolver, plus the frozen active-controller identity.
+// ---------------------------------------------------------------------------
+
+/**
+ * The three explicit controller states. Every mutation/run/log/autoresume
+ * entrypoint resolves through `loadControllerGate` and fails closed on
+ * `error`: broken configuration never takes the off branch.
+ */
+export type ControllerGate =
+  | { status: "off" }
+  | { status: "enabled"; config: ControllerConfig }
+  | { status: "error"; error: ControllerConfigError };
+
+/** Frozen proof that this work dir ran with the controller enabled. */
+export interface ControllerIdentity {
+  v: 1;
+  mode: "jev";
+  /** Hash of the enabled config at freeze time (change detection, not identity). */
+  configHash: string;
+  frozenAt: string;
+}
+
+export const CONTROLLER_IDENTITY_FILENAME = "identity.json";
+
+export function controllerIdentityPath(workDir: string): string {
+  return path.join(controllerDir(workDir), CONTROLLER_IDENTITY_FILENAME);
+}
+
+function toControllerConfigError(cause: unknown): ControllerConfigError {
+  if (cause instanceof ControllerConfigError) return cause;
+  return new ControllerConfigError(
+    "controller",
+    `configuration error (${cause instanceof Error ? cause.message : String(cause)})`,
+  );
+}
+
+/**
+ * Freeze the active controller identity for a work dir. Reached only through
+ * `loadControllerGate` on an enabled resolution, and only once controller
+ * storage already shows activity — so baseline-exempt sessions leave no
+ * controller state behind. Best-effort: a failed freeze never blocks the
+ * operation (journal activity below still proves enabled-ness).
+ */
+export function freezeControllerIdentity(workDir: string, config: ControllerConfig): void {
+  const configHash = sha256Hex(stableStringify(config));
+  try {
+    const identityPath = controllerIdentityPath(workDir);
+    try {
+      const existing = JSON.parse(fs.readFileSync(identityPath, "utf-8")) as Partial<ControllerIdentity>;
+      if (existing?.v === 1 && existing?.mode === "jev" && existing?.configHash === configHash) return;
+    } catch {
+      // Absent or unreadable: (re)freeze below.
+    }
+    fs.mkdirSync(path.dirname(identityPath), { recursive: true });
+    const identity: ControllerIdentity = {
+      v: 1,
+      mode: "jev",
+      configHash,
+      frozenAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(identityPath, `${JSON.stringify(identity)}\n`, "utf-8");
+  } catch {
+    // Best-effort only; journal activity remains as proof of enabled-ness.
+  }
+}
+
+/**
+ * True when this work dir provably ran with the controller enabled: a frozen
+ * identity file exists, or controller storage already shows activity
+ * (journal events, pending snapshot, or frozen policy). Used to distinguish
+ * "never enabled" (absent/off parity) from "was enabled, config vanished".
+ */
+export function wasControllerEnabled(workDir: string): boolean {
+  try {
+    const identity = JSON.parse(
+      fs.readFileSync(controllerIdentityPath(workDir), "utf-8"),
+    ) as Partial<ControllerIdentity>;
+    if (identity?.v === 1 && identity?.mode === "jev") return true;
+  } catch {
+    // Fall through to activity checks.
+  }
+  const dir = controllerDir(workDir);
+  for (const name of ["events.jsonl", "pending.json", "policy.json"]) {
+    try {
+      if (fs.existsSync(path.join(dir, name))) return true;
+    } catch {
+      // Ignore; keep checking.
+    }
+  }
+  return false;
+}
+
+/** Remove the frozen identity (explicit operator-controlled mode change only). */
+export function clearControllerIdentity(workDir: string): void {
+  try {
+    fs.rmSync(controllerIdentityPath(workDir), { force: true });
+  } catch {
+    // Best-effort.
+  }
+}
+
+/** True only when `.auto/config.json` explicitly sets `controller.mode: "off"`. */
+function isExplicitOff(ctxCwd: string): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(sessionFilePath(ctxCwd, "config"), "utf-8")) as Record<string, unknown>;
+    const controller = (parsed as Record<string, unknown>)?.controller;
+    return (
+      controller !== null &&
+      typeof controller === "object" &&
+      !Array.isArray(controller) &&
+      (controller as Record<string, unknown>).mode === "off"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The one shared resolver for every entrypoint. Returns:
+ * - `enabled` for a valid `mode: "jev"` section (opportunistically refreshes
+ *   the frozen identity once controller storage shows activity);
+ * - `off` when never enabled, or when a previously enabled work dir is
+ *   explicitly switched to a valid `mode: "off"` (the operator-controlled
+ *   mode change, which also clears the frozen identity);
+ * - `error` for malformed/inaccessible/invalid configuration, and when a
+ *   previously enabled work dir loses its config without that explicit
+ *   change (fail closed: pause, never silently downgrade to off).
+ *
+ * Never throws: `ControllerConfigError`s become `{ status: "error" }` values.
+ */
+export function loadControllerGate(ctxCwd: string, workDir: string = ctxCwd): ControllerGate {
+  let resolution: ControllerResolution;
+  try {
+    resolution = loadControllerResolution(ctxCwd);
+  } catch (cause) {
+    return { status: "error", error: toControllerConfigError(cause) };
+  }
+  if (resolution.enabled) {
+    // Opportunistic freeze only: baseline-exempt sessions must leave no
+    // controller state behind, so the identity is written only once
+    // controller storage already shows activity (the first journaled event,
+    // snapshot, or policy creates the directory). `wasControllerEnabled`
+    // treats that same activity as proof, so the fail-closed rule below
+    // holds even before the identity file lands.
+    try {
+      if (fs.existsSync(controllerDir(workDir))) freezeControllerIdentity(workDir, resolution.config);
+    } catch {
+      // Best-effort only.
+    }
+    return { status: "enabled", config: resolution.config };
+  }
+  if (!wasControllerEnabled(workDir)) return { status: "off" };
+  if (isExplicitOff(ctxCwd)) {
+    clearControllerIdentity(workDir);
+    return { status: "off" };
+  }
+  return {
+    status: "error",
+    error: new ControllerConfigError(
+      "controller",
+      "controller was enabled for this work dir but its configuration is now missing or implicitly disabled; " +
+        "restore a valid \"controller\": { \"mode\": \"jev\" } section or switch explicitly with " +
+        "\"controller\": { \"mode\": \"off\" } — the session stays paused until then",
+    ),
+  };
 }

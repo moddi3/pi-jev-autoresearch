@@ -54,8 +54,7 @@ import {
 } from "./compaction.ts";
 import { resolveAutoresearchShortcuts, SHORTCUT_ACTIONS } from "./shortcuts.ts";
 import { sessionFilePath, sessionFileCandidates, ensureParentDir, AUTO_DIR } from "./paths.ts";
-import { loadControllerResolution, isControllerEnabled } from "./controller/config.ts";
-import type { ControllerConfig } from "./controller/types.ts";
+import { loadControllerGate } from "./controller/config.ts";
 import { createJevClient } from "./controller/jev-client.ts";
 import { ControllerLifecycle } from "./controller/lifecycle.ts";
 import { isSelectorLocked } from "./controller/selector.ts";
@@ -68,7 +67,6 @@ import {
   decideToolPreflight,
   executeCancelSelection,
   executeSelectExperiment,
-  isJevControllerActive,
   prepareControllerLog,
   prepareControllerRun,
   readChangedTargetPaths,
@@ -79,7 +77,7 @@ import {
   type ExperimentSnapshot,
   type ProposalBooks,
 } from "./controller/tools.ts";
-import { loadPendingSnapshot } from "./controller/store.ts";
+import { isControllerPaused, loadPendingSnapshot } from "./controller/store.ts";
 
 // ---------------------------------------------------------------------------
 // Experiment output limits (sent to LLM — keep small to save context)
@@ -1206,9 +1204,10 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     pi.registerTool(tool);
   };
 
-  /** True only when autoresearch runs AND a valid Jev controller is configured. */
+  /** True only when autoresearch runs AND the shared gate resolves enabled (never on config error). */
   const isJevModeFor = (ctx: ExtensionContext): boolean =>
-    getRuntime(ctx).autoresearchMode && isJevControllerActive(ctx.cwd);
+    getRuntime(ctx).autoresearchMode &&
+    loadControllerGate(ctx.cwd, resolveWorkDir(ctx.cwd)).status === "enabled";
 
   /** Add/remove exactly the controller tools, never touching unrelated tools. */
   const applyControllerGating = (activeTools: Set<string>, jevMode: boolean): void => {
@@ -1235,7 +1234,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     for (const tool of gatedToolNames) {
       enabled ? activeTools.add(tool) : activeTools.delete(tool);
     }
-    applyControllerGating(activeTools, enabled && isJevControllerActive(ctx.cwd));
+    applyControllerGating(activeTools, isJevModeFor(ctx));
     pi.setActiveTools([...activeTools]);
   };
 
@@ -1277,10 +1276,16 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       return;
     }
     if (!isAgentSettled(ctx)) return;
+    const blockReason = controllerAutoResumeBlockReason(ctx);
+    if (blockReason !== null) {
+      cancelPendingResume(runtime);
+      notifyAutoResumeStopped(ctx, blockReason);
+      return;
+    }
     const stopReason = autoResumeStopReasonFor(runtime);
     if (stopReason !== null) {
       cancelPendingResume(runtime);
-      notifyAutoResumeLimitReached(ctx, stopReason);
+      notifyAutoResumeStopped(ctx, stopReason);
       return;
     }
 
@@ -1314,8 +1319,27 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
   const shouldAutoResumeAfterCompact = (runtime: AutoresearchRuntime): boolean =>
     runtime.autoresearchMode;
 
-  const notifyAutoResumeLimitReached = (ctx: ExtensionContext, reason?: string | null): void => {
+  const notifyAutoResumeStopped = (ctx: ExtensionContext, reason?: string | null): void => {
     ctx.ui.notify(reason ?? `Autoresearch auto-resume limit reached`, "info");
+  };
+
+  /**
+   * Fail-closed auto-resume guard for the controller: no automatic
+   * continuation while the shared gate reports a configuration error or the
+   * journal reports paused. Off mode and unpaused Jev mode return null, so
+   * upstream auto-resume behavior is preserved there. Only the operator
+   * resumes explicitly (`/autoresearch controller resume`).
+   */
+  const controllerAutoResumeBlockReason = (ctx: ExtensionContext): string | null => {
+    const workDir = resolveWorkDir(ctx.cwd);
+    const gate = loadControllerGate(ctx.cwd, workDir);
+    if (gate.status === "error") {
+      return `Autoresearch auto-resume stopped — Jev controller config error: ${gate.error.message}`;
+    }
+    if (gate.status === "enabled" && isControllerPaused(workDir)) {
+      return "Autoresearch auto-resume stopped — Jev controller is paused. Resume explicitly with `/autoresearch controller resume`.";
+    }
+    return null;
   };
 
   const composeResumeMessage = (_ctx: ExtensionContext): string => {
@@ -1419,13 +1443,15 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
 
   const autoresearchHelp = () =>
     [
-      "Usage: /autoresearch [off|clear|export|dashboard|<text>]",
+      "Usage: /autoresearch [off|clear|export|dashboard|controller resume|<text>]",
       "",
       "<text> enters autoresearch mode and starts or resumes the loop.",
       "off leaves autoresearch mode.",
       "clear deletes the session log (.auto/log.jsonl) and turns autoresearch mode off.",
       "export opens a local live dashboard for the session log in your browser.",
       "dashboard opens the fullscreen dashboard overlay in the terminal.",
+      "controller resume clears a journaled Jev pause (provider failure, cancellation cap) — operator only.",
+      "controller resume abandon resumes while deliberately abandoning measured-but-unfinalized work.",
 
       "",
       "Examples:",
@@ -1433,6 +1459,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       "  /autoresearch model training, run 5 minutes of train.py and note the loss ratio as optimization target",
       "  /autoresearch export",
       "  /autoresearch dashboard",
+      "  /autoresearch controller resume",
     ].join("\n");
 
   // -----------------------------------------------------------------------
@@ -1528,12 +1555,15 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
 
     // Rehydrate the Jev controller slot when Jev control is enabled. The
     // journal on disk is authoritative; a corrupt journal is reported loudly
-    // instead of silently resetting the pending decision. An invalid config
-    // section stays silent here: before_agent_start already owns that error.
+    // instead of silently resetting the pending decision. A configuration
+    // error stays silent here: before_agent_start already owns that error,
+    // and the shared gate keeps every entrypoint fail-closed until repair.
+    // The gate never throws (errors are values); the try/catch covers
+    // recovery I/O only.
     try {
-      const resolution = loadControllerResolution(ctx.cwd);
-      if (isControllerEnabled(resolution)) {
-        getControllerSession(ctx, workDir, resolution.config.maxCancellationsPerSegment).lifecycle.recover({
+      const gate = loadControllerGate(ctx.cwd, workDir);
+      if (gate.status === "enabled") {
+        getControllerSession(ctx, workDir, gate.config.maxCancellationsPerSegment).lifecycle.recover({
           // Journal plus upstream outcomes: a crash between log_experiment
           // and the controller outcome append still reconstructs completion.
           upstreamOutcomes: readUpstreamOutcomeLinks(workDir),
@@ -1651,13 +1681,26 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
   ): void => {
     const runtime = getRuntime(ctx);
     if (hasPendingResume(runtime)) {
+      // A pause or config error engaged after scheduling still wins:
+      // re-check before rescheduling instead of auto-continuing.
+      const blockReason = controllerAutoResumeBlockReason(ctx);
+      if (blockReason !== null) {
+        cancelPendingResume(runtime);
+        notifyAutoResumeStopped(ctx, blockReason);
+        return;
+      }
       reschedulePendingResume(ctx, runtime);
       return;
     }
     if (!gate(runtime)) return;
+    const blockReason = controllerAutoResumeBlockReason(ctx);
+    if (blockReason !== null) {
+      notifyAutoResumeStopped(ctx, blockReason);
+      return;
+    }
     const stopReason = autoResumeStopReasonFor(runtime);
     if (stopReason !== null) {
-      notifyAutoResumeLimitReached(ctx, stopReason);
+      notifyAutoResumeStopped(ctx, stopReason);
       return;
     }
     schedulePendingResume(ctx, runtime, composeMessage(ctx));
@@ -1689,12 +1732,14 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     // Absent/off resolves to nothing here, keeping the prompt byte-identical
     // to baseline. Invalid enabled config fails loudly instead of silently
     // running without Jev direction.
+    const workDir = resolveWorkDir(ctx.cwd);
     let controllerExtra = "";
     let jevActive = false;
-    try {
-      jevActive = isControllerEnabled(loadControllerResolution(ctx.cwd));
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+    const gate = loadControllerGate(ctx.cwd, workDir);
+    if (gate.status === "enabled") {
+      jevActive = true;
+    } else if (gate.status === "error") {
+      const message = gate.error.message;
       if (ctx.hasUI) {
         ctx.ui.notify(`Jev controller config error: ${message}`, "error");
       }
@@ -1705,7 +1750,6 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         `\nError: ${message}`;
     }
 
-    const workDir = resolveWorkDir(ctx.cwd);
     const mdPath = autoresearchMdPath(workDir);
     const ideasPath = autoresearchIdeasPath(workDir);
     const hasIdeas = fs.existsSync(ideasPath);
@@ -1757,8 +1801,14 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
   // (ticket 09) and violations are logged, never claimed as confinement.
   pi.on("tool_call", async (event, ctx) => {
     const runtime = getRuntime(ctx);
-    if (!runtime.autoresearchMode || !isJevControllerActive(ctx.cwd)) return undefined;
+    if (!runtime.autoresearchMode) return undefined;
     const workDir = resolveWorkDir(ctx.cwd);
+    const gate = loadControllerGate(ctx.cwd, workDir);
+    if (gate.status === "off") return undefined;
+    // A configuration error fails closed through the same preflight policy:
+    // mutations, runs, and selections block while reads and `.auto/` repair
+    // stay possible.
+    const configError = gate.status === "error" ? gate.error.message : undefined;
 
     let stateName: Parameters<typeof decideToolPreflight>[0]["lifecycleState"] = "unknown";
     let hasPendingDecision = false;
@@ -1799,6 +1849,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       selectionInFlight: isSelectorLocked(workDir),
       runInFlight: runtime.runningExperiment !== null,
       approvedPaths,
+      configError,
     });
     return decision.block ? { block: true, reason: decision.reason } : undefined;
   });
@@ -1999,13 +2050,36 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       // implemented diff. Baseline establishment is exempt. Upstream
       // measurement, checks, and keep/discard behavior below are unchanged.
       let controllerRun: { lifecycle: ControllerLifecycle; decisionId: string; notices: string[] } | null = null;
-      if (runtime.autoresearchMode && isJevControllerActive(ctx.cwd)) {
+      const gate = loadControllerGate(ctx.cwd, workDir);
+      if (gate.status === "error") {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `❌ Jev controller config error: ${gate.error.message} ` +
+              "Fix the \"controller\" section of .auto/config.json before measuring. Action: stop.",
+          }],
+          details: {
+            command: params.command,
+            exitCode: null,
+            durationSeconds: 0,
+            passed: false,
+            crashed: true,
+            timedOut: false,
+            tailOutput: "",
+            checksPass: null,
+            checksTimedOut: false,
+            checksOutput: "",
+            checksDuration: 0,
+          } as RunDetails,
+        };
+      }
+      if (runtime.autoresearchMode && gate.status === "enabled") {
         try {
-          const loaded = loadControllerResolution(ctx.cwd);
           const session = getControllerSession(
             ctx,
             workDir,
-            loaded.enabled ? loaded.config.maxCancellationsPerSegment : 2,
+            gate.config.maxCancellationsPerSegment,
           );
           const prepared = prepareControllerRun({
             workDir,
@@ -2597,13 +2671,24 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         recoveredAssociation: boolean;
       } | null = null;
       let controllerChecksPass: boolean | null = null;
-      if (runtime.autoresearchMode && isJevControllerActive(ctx.cwd)) {
+      const logGate = loadControllerGate(ctx.cwd, workDir);
+      if (logGate.status === "error") {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `❌ Jev controller config error: ${logGate.error.message} ` +
+              "Fix the \"controller\" section of .auto/config.json before logging. Action: stop.",
+          }],
+          details: {},
+        };
+      }
+      if (runtime.autoresearchMode && logGate.status === "enabled") {
         try {
-          const loaded = loadControllerResolution(ctx.cwd);
           const session = getControllerSession(
             ctx,
             workDir,
-            loaded.enabled ? loaded.config.maxCancellationsPerSegment : 2,
+            logGate.config.maxCancellationsPerSegment,
           );
           controllerChecksPass = runtime.lastRunChecks ? runtime.lastRunChecks.pass : null;
           const prepared = prepareControllerLog({
@@ -3025,7 +3110,18 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const runtime = getRuntime(ctx);
-      if (!runtime.autoresearchMode || !isJevControllerActive(ctx.cwd)) {
+      const workDir = resolveWorkDir(ctx.cwd);
+      const gate = loadControllerGate(ctx.cwd, workDir);
+      if (gate.status === "error") {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Jev controller config error: ${gate.error.message}. Fix the "controller" section of .auto/config.json. Action: stop.`,
+          }],
+          details: {},
+        };
+      }
+      if (!runtime.autoresearchMode || gate.status !== "enabled") {
         return {
           content: [{
             type: "text",
@@ -3034,26 +3130,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
           details: {},
         };
       }
-      let resolution: { enabled: true; mode: "jev"; config: ControllerConfig };
-      try {
-        const loaded = loadControllerResolution(ctx.cwd);
-        if (!isControllerEnabled(loaded)) {
-          return {
-            content: [{ type: "text", text: "❌ select_experiment needs a valid `controller: { mode: \"jev\" }` section." }],
-            details: {},
-          };
-        }
-        resolution = loaded;
-      } catch (e) {
-        return {
-          content: [{
-            type: "text",
-            text: `❌ Jev controller config error: ${e instanceof Error ? e.message : String(e)}. Fix the "controller" section of .auto/config.json. Action: stop.`,
-          }],
-          details: {},
-        };
-      }
-      const workDir = resolveWorkDir(ctx.cwd);
+      const resolution = gate;
       const { lifecycle, books } = getControllerSession(
         ctx,
         workDir,
@@ -3125,7 +3202,18 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const runtime = getRuntime(ctx);
-      if (!runtime.autoresearchMode || !isJevControllerActive(ctx.cwd)) {
+      const workDir = resolveWorkDir(ctx.cwd);
+      const gate = loadControllerGate(ctx.cwd, workDir);
+      if (gate.status === "error") {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Jev controller config error: ${gate.error.message}. Fix the "controller" section of .auto/config.json. Action: stop.`,
+          }],
+          details: {},
+        };
+      }
+      if (!runtime.autoresearchMode || gate.status !== "enabled") {
         return {
           content: [{
             type: "text",
@@ -3134,26 +3222,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
           details: {},
         };
       }
-      let resolution: { enabled: true; mode: "jev"; config: ControllerConfig };
-      try {
-        const loaded = loadControllerResolution(ctx.cwd);
-        if (!isControllerEnabled(loaded)) {
-          return {
-            content: [{ type: "text", text: "❌ cancel_selection needs a valid `controller: { mode: \"jev\" }` section." }],
-            details: {},
-          };
-        }
-        resolution = loaded;
-      } catch (e) {
-        return {
-          content: [{
-            type: "text",
-            text: `❌ Jev controller config error: ${e instanceof Error ? e.message : String(e)}. Fix the "controller" section of .auto/config.json. Action: stop.`,
-          }],
-          details: {},
-        };
-      }
-      const workDir = resolveWorkDir(ctx.cwd);
+      const resolution = gate;
       const { lifecycle } = getControllerSession(
         ctx,
         workDir,
@@ -3626,6 +3695,79 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     );
   }
 
+  /**
+   * Explicit operator resume (`/autoresearch controller resume`): the only
+   * resume path — resume is a slash command, never a tool, so the research
+   * LLM cannot clear cancellation caps or repeatedly unpause provider
+   * failures. Fails closed on configuration errors, refuses when off or not
+   * paused, and journals a durable `controller_resumed` event so ordered
+   * journal reduction stays resumed across restarts.
+   *
+   * Measured-but-unfinalized work is preserved for finalization unless
+   * `abandon` (`controller resume abandon`) deliberately abandons it.
+   * History and budgets are preserved either way: resume only appends.
+   * Documented in `docs/jev-controller.md` ("Pause and operator resume").
+   */
+  async function resumeControllerCommand(ctx: ExtensionContext, abandon: boolean): Promise<void> {
+    const workDir = resolveWorkDir(ctx.cwd);
+    const gate = loadControllerGate(ctx.cwd, workDir);
+    if (gate.status === "error") {
+      ctx.ui.notify(
+        `Cannot resume — Jev controller config error: ${gate.error.message} Fix .auto/config.json first.`,
+        "error",
+      );
+      return;
+    }
+    if (gate.status === "off") {
+      ctx.ui.notify(
+        "Cannot resume — the Jev controller is off (no controller configuration).",
+        "error",
+      );
+      return;
+    }
+    const { lifecycle } = getControllerSession(ctx, workDir, gate.config.maxCancellationsPerSegment);
+    try {
+      lifecycle.recover({ upstreamOutcomes: readUpstreamOutcomeLinks(workDir) });
+    } catch (e) {
+      ctx.ui.notify(
+        `Cannot resume — controller storage is corrupt (${e instanceof Error ? e.message : String(e)}); no selection is usable.`,
+        "error",
+      );
+      return;
+    }
+    if (lifecycle.state !== "paused") {
+      ctx.ui.notify(
+        `Controller is not paused (state: ${lifecycle.state}) — nothing to resume.`,
+        "info",
+      );
+      return;
+    }
+    try {
+      lifecycle.resumeController(abandon ? { abandonMeasuredRun: true } : undefined);
+    } catch (e) {
+      ctx.ui.notify(`Cannot resume — ${e instanceof Error ? e.message : String(e)}`, "error");
+      return;
+    }
+    syncControllerTools(ctx);
+    updateWidget(ctx);
+    if (abandon) {
+      ctx.ui.notify(
+        "Controller resumed — unfinalized work deliberately abandoned (journaled); history and budgets preserved. Next: select_experiment with a fresh set.",
+        "info",
+      );
+    } else if (lifecycle.state === "needs_selection") {
+      ctx.ui.notify(
+        "Controller resumed — journaled pause cleared durably; history and budgets preserved. Next: select_experiment with a fresh set of candidates.",
+        "info",
+      );
+    } else {
+      ctx.ui.notify(
+        `Controller resumed — measured-but-unfinalized ${lifecycle.state} work preserved for decision ${lifecycle.pendingDecisionId ?? "unknown"}; finalize it with run_experiment + log_experiment.`,
+        "info",
+      );
+    }
+  }
+
   pi.registerCommand("autoresearch", {
     description: "Start, stop, clear, export, or open dashboards for autoresearch mode",
     handler: async (args, ctx) => {
@@ -3650,6 +3792,16 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
 
       if (command === "dashboard") {
         await openFullscreenDashboard(ctx);
+        return;
+      }
+
+      if (command === "controller resume" || command === "controller resume abandon") {
+        await resumeControllerCommand(ctx, command === "controller resume abandon");
+        return;
+      }
+
+      if (command.startsWith("controller ")) {
+        ctx.ui.notify(`Unknown controller action — try "/autoresearch controller resume".`, "error");
         return;
       }
 

@@ -104,6 +104,8 @@ Then start the loop inside pi:
 | `/autoresearch clear` | Delete `.auto/log.jsonl`, reset all state, and turn autoresearch mode off. Use this for a clean start. |
 | `/autoresearch export` | Open a live dashboard in your browser. Auto-updates as experiments run. |
 | `/autoresearch dashboard` | Open the fullscreen scrollable dashboard overlay in the terminal. Navigate with `↑`/`↓`/`j`/`k`, `PageUp`/`PageDown`/`u`/`d`, `g`/`G` for top/bottom, `Escape` or `q` to close. |
+| `/autoresearch controller resume` | Clear a journaled Jev pause (provider failure, cancellation cap) — operator only. Durably journaled, survives restarts; history and budgets preserved. See `docs/jev-controller.md` ("Pause and operator resume"). |
+| `/autoresearch controller resume abandon` | Resume while deliberately abandoning measured-but-unfinalized work (otherwise such work is preserved for finalization). |
 
 **Examples:**
 
@@ -114,6 +116,7 @@ Then start the loop inside pi:
 /autoresearch dashboard
 /autoresearch off
 /autoresearch clear
+/autoresearch controller resume
 ```
 
 ### Keyboard shortcuts (opt-in)

@@ -28,6 +28,27 @@ Behavioral guarantees:
 - An invalid enabled config errors loudly (prompt banner + notification naming the field). It never silently runs without Jev direction.
 - Enabling/disabling the controller never deactivates unrelated Pi tools — only the two selection tools follow Jev control.
 
+## Configuration states: off, enabled, configuration-error
+
+The controller resolves through one shared gate (`loadControllerGate`) to exactly three states:
+
+- `off` — no `controller` section, or an explicit valid `"mode": "off"`. Upstream behavior, byte-identical.
+- `enabled` — a valid `"mode": "jev"` section.
+- `error` — malformed JSON, an unreadable config file, an invalid enabled section, or a vanished config in a session that already ran enabled. Every mutation/run/log/autoresume entrypoint fails closed on `error`: target edits, `run_experiment`, `log_experiment`, `select_experiment`, and `cancel_selection` are rejected with the field-naming error, and no automatic continuation loop runs. Reads and `.auto/` repair (including editing `.auto/config.json` itself) stay possible.
+
+Once a work dir runs enabled, its active identity is frozen (`.auto/controller/identity.json`, refreshed opportunistically; journal activity counts as proof too). A vanished config afterwards pauses the session — it never implicitly downgrades to off. Only an explicit operator-controlled mode change (`"controller": { "mode": "off" }`) downgrades back to off. To recover from `error`: fix the config (the pending state rehydrates via normal recovery — no resume needed) or switch explicitly off.
+
+## Pause and operator resume
+
+A provider failure or an exceeded segment cancellation cap journals `controller_paused` and stops the loop visibly: selections fail with a stop action, and no automatic continuation runs while paused. Resume is operator-only — `/autoresearch controller resume` — because resume is a slash command, not a tool: the research LLM cannot clear cancellation caps or repeatedly unpause provider failures. Resume journals a durable `controller_resumed` event handled in ordered journal reduction, so the resume survives restarts and reloads; invalidated pending associations (`pending_invalidated`) are terminal and never reappear from older journal entries.
+
+Resume semantics:
+
+- No pending work (e.g. provider failure during selection): resume returns to `needs_selection`.
+- Stale selected work: invalidated (history preserved, snapshot cleared); propose a fresh set next.
+- Measured-but-unfinalized work (`running` / `awaiting_log` pending): preserved for finalization — resume restores its live state so it must be logged next, never silently erased. `/autoresearch controller resume abandon` instead deliberately abandons it (journaled with an abandon reason).
+- History and budgets are preserved through resume: resume only appends, so journaled cancellations still count and prior decisions stay linked.
+
 ## The loop
 
 1. **Baseline is exempt.** Establish the objective, benchmark, and baseline exactly as in normal autoresearch.
@@ -67,7 +88,8 @@ Invalidation / preservation behavior:
 | `/autoresearch clear` | **deleted**: session log *and* `.auto/controller/` (`controllerClearTargets`) | cancelled | Same confirmation semantics as the existing clear |
 | Re-init (`init_experiment`) | preserved (new segment) | pending decisions belong to the old segment | Never resets an evaluation budget — trial-global cost/time/experiment limits stand |
 | Epoch change (objective/policy) | preserved | **invalidated** | Pending work from an older epoch is never rebuilt |
-| Provider failure / cancel cap | preserved | **paused** visibly | Explicit resume required; no silent LLM fallback |
+| Provider failure / cancel cap | preserved | **paused** visibly | Explicit operator resume required (`/autoresearch controller resume`); no silent LLM fallback; resume journals durable `controller_resumed` |
+| Operator resume | preserved (append-only; budgets intact) | **resumed** (`needs_selection`, or restored `running`/`awaiting_log` for finalization) | Stale selected work invalidated terminally; measured work preserved unless `controller resume abandon` |
 
 A torn trailing journal line is quarantined (bytes preserved, tail truncated); corruption anywhere else errors loudly instead of inventing state. A crash between `log_experiment` and the outcome append is closed from the upstream link on recovery.
 

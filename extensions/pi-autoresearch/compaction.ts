@@ -373,6 +373,7 @@ function pendingPointer(events: ControllerEvent[], snapshot: PendingSnapshot | u
       (event.kind === "outcome" && event.record.decisionId === snapshot.decisionId) ||
       (event.kind === "decision_cancelled" && event.decisionId === snapshot.decisionId) ||
       (event.kind === "decision_discarded" && event.decisionId === snapshot.decisionId) ||
+      (event.kind === "pending_invalidated" && event.decisionId === snapshot.decisionId) ||
       (event.kind === "new_proposals" && event.decisionId === snapshot.decisionId),
   );
   if (closed) return undefined;

@@ -170,6 +170,12 @@ export interface PreflightInput {
    * Null when unknown — fail open on missing data, fail closed on known scope.
    */
   approvedPaths: string[] | null;
+  /**
+   * Configuration error message from the shared gate (`loadControllerGate`).
+   * Fails closed: mutations, runs, and selections block while set; reads and
+   * `.auto/` repair stay possible. Absent/undefined preserves prior behavior.
+   */
+  configError?: string;
 }
 
 export interface PreflightDecision {
@@ -197,6 +203,38 @@ function isAlwaysAllowedPath(target: string): boolean {
  * experiment's files, and conflicting simultaneous selection/run operations.
  */
 export function decideToolPreflight(input: PreflightInput): PreflightDecision {
+  // Configuration errors fail closed at every entrypoint: no mutation, run,
+  // or selection proceeds while the shared gate reports an error. Safe
+  // read-only inspection and operator repair inside `.auto/` stay possible.
+  if (input.configError) {
+    if (input.toolName === "write" || input.toolName === "edit") {
+      const target = input.toolPath ?? "";
+      if (target === "" || isAlwaysAllowedPath(target)) return { block: false };
+      return {
+        block: true,
+        reason:
+          `Jev controller config error: ${input.configError} ` +
+          "Target edits are blocked until the controller configuration is fixed. " +
+          "Fix the \"controller\" section of .auto/config.json (that file itself stays editable), " +
+          "or switch explicitly to \"controller\": { \"mode\": \"off\" }.",
+      };
+    }
+    if (
+      input.toolName === "run_experiment" ||
+      input.toolName === SELECT_EXPERIMENT_TOOL ||
+      input.toolName === CANCEL_SELECTION_TOOL
+    ) {
+      return {
+        block: true,
+        reason:
+          `Jev controller config error: ${input.configError} ` +
+          `${input.toolName} is blocked until the controller configuration is fixed. ` +
+          "Fix the \"controller\" section of .auto/config.json, " +
+          "or switch explicitly to \"controller\": { \"mode\": \"off\" }.",
+      };
+    }
+    return { block: false };
+  }
   if (!input.autoresearchMode || !input.controllerEnabled) {
     return { block: false };
   }
@@ -764,6 +802,17 @@ export async function executeSelectExperiment(
   } catch (cause) {
     if (cause instanceof SelectorError) return selectorRejection(cause);
     if (cause instanceof ControllerStoreError || cause instanceof LifecycleTransitionError) {
+      // Paused is operator-only: the research LLM has no resume path (resume
+      // is a slash command, not a tool), so it must stop instead of retrying.
+      if (lifecycle.state === "paused") {
+        return {
+          ok: false,
+          text:
+            `❌ selection rejected while the controller is paused: ${cause.message}\n` +
+            "Action: stop — Stop this line of attempts. Only the operator can resume " +
+            "(`/autoresearch controller resume`); do not retry select_experiment to unpause.",
+        };
+      }
       return {
         ok: false,
         text: `❌ selection rejected [concurrent-operation]: ${cause.message}\nAction: resume-pending — ${actionHint("resume-pending")}`,
@@ -890,6 +939,15 @@ export async function executeCancelSelection(
       details: { decisionId: outcome.decisionId, cancelled: true },
     };
   } catch (cause) {
+    if (lifecycle.state === "paused") {
+      return {
+        ok: false,
+        text:
+          `❌ cancellation rejected while the controller is paused: ${cause instanceof Error ? cause.message : String(cause)}\n` +
+          "Action: stop — Stop this line of attempts. Only the operator can resume " +
+          "(`/autoresearch controller resume`); do not retry cancel_selection to unpause.",
+      };
+    }
     return {
       ok: false,
       text: `❌ cancellation rejected: ${cause instanceof Error ? cause.message : String(cause)}\nAction: stop — ${actionHint("stop")}`,
