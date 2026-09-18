@@ -60,6 +60,7 @@ import { ControllerLifecycle } from "./controller/lifecycle.ts";
 import { isSelectorLocked } from "./controller/selector.ts";
 import {
   CANCEL_SELECTION_TOOL,
+  CONTROLLER_EPOCH_V1,
   SELECT_EXPERIMENT_TOOL,
   buildEvidenceCatalog,
   buildJevProtocolGuidance,
@@ -1163,7 +1164,14 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
     controllerSessions.delete(getSessionKey(ctx));
   };
 
-  /** Live experiment snapshot for selection-state assembly. */
+  /**
+   * Live experiment snapshot for selection-state assembly (review R6).
+   * Every upstream result travels with its segment identity in global
+   * `run-N` order; `assembleSelectionState` filters to the active segment
+   * before aggregating while preserving those global ids. The experiment
+   * budget stays trial-global (all segments) so a new segment resets its
+   * baseline but never resets allowed experiments.
+   */
   const snapshotFromRuntime = (runtime: AutoresearchRuntime): ExperimentSnapshot => ({
     objective: {
       name: runtime.state.name ?? "autoresearch",
@@ -1177,8 +1185,10 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       timestampMs: result.timestamp,
       commit: result.commit,
       description: result.description,
+      segment: result.segment,
     })),
     segment: runtime.state.currentSegment,
+    epoch: CONTROLLER_EPOCH_V1,
     maxExperiments: runtime.state.maxExperiments,
   });
 
@@ -2018,10 +2028,11 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       }
       const workDir = resolveWorkDir(ctx.cwd);
 
-      // Block if max experiments limit already reached
+      // Block if max experiments limit already reached. The cap is
+      // trial-global (all segments): a new segment resets its baseline but
+      // never resets allowed experiments (review R6).
       if (state.maxExperiments !== null) {
-        const segCount = currentResults(state.results, state.currentSegment).length;
-        if (segCount >= state.maxExperiments) {
+        if (state.results.length >= state.maxExperiments) {
           return {
             content: [{ type: "text", text: `🛑 Maximum experiments reached (${state.maxExperiments}). The experiment loop is done. To continue, call init_experiment to start a new segment.` }],
             details: {},
@@ -3039,7 +3050,7 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
         }
       }
 
-      text += `\n(${segmentCount} experiments`;
+      text += `\n(${segmentCount} experiments in this segment, ${state.results.length} in trial`;
       if (state.maxExperiments !== null) {
         text += ` / ${state.maxExperiments} max`;
       }
@@ -3337,7 +3348,9 @@ export default function autoresearchExtension(pi: ExtensionAPI) {
       runtime.lastRunChecks = null;
       runtime.lastRunDuration = null;
 
-      const limitReached = state.maxExperiments !== null && segmentCount >= state.maxExperiments;
+      // Trial-global cap (review R6): a new segment resets its baseline but
+      // never resets allowed experiments.
+      const limitReached = state.maxExperiments !== null && state.results.length >= state.maxExperiments;
       if (limitReached) {
         text += `\n\n🛑 Maximum experiments reached (${state.maxExperiments}). STOP the experiment loop now.`;
         recordAutoresearchActivation(workDir, false);

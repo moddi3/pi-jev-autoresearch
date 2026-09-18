@@ -47,6 +47,7 @@ export const CONTROLLER_DIRNAME = "controller";
 export const CONTROLLER_EVENTS_FILENAME = "events.jsonl";
 export const CONTROLLER_PENDING_FILENAME = "pending.json";
 export const CONTROLLER_POLICY_FILENAME = "policy.json";
+export const CONTROLLER_OBJECTIVE_FILENAME = "objective.json";
 export const CONTROLLER_PAYLOADS_DIRNAME = "payloads";
 export const CONTROLLER_QUARANTINE_DIRNAME = "quarantine";
 
@@ -72,6 +73,7 @@ export type ControllerStoreErrorCode =
   | "journal-quarantined"
   | "pending-corrupt"
   | "policy-frozen"
+  | "objective-frozen"
   | "payload-rejected"
   | "stale-revision"
   | "io";
@@ -115,6 +117,10 @@ export function controllerPendingPath(workDir: string): string {
 
 export function controllerPolicyPath(workDir: string): string {
   return path.join(controllerDir(workDir), CONTROLLER_POLICY_FILENAME);
+}
+
+export function controllerObjectivePath(workDir: string): string {
+  return path.join(controllerDir(workDir), CONTROLLER_OBJECTIVE_FILENAME);
 }
 
 export function controllerPayloadsDir(workDir: string): string {
@@ -1170,6 +1176,119 @@ export function loadControllerPolicy(workDir: string): ControllerPolicy | undefi
     throw storeError("validation", "frozen policy must be an object", policyPath);
   }
   return parsed as ControllerPolicy;
+}
+
+// --- Frozen objective (review R6: V1 one-objective constraint) ---
+
+/**
+ * Frozen controller objective identity: the measurement semantics Jev
+ * selects over. V1 constrains one objective per controller session: the
+ * first selection freezes `metricName` + `direction`, and a later selection
+ * with different measurement semantics is rejected (fresh session required)
+ * instead of silently mixing metrics or reusing a stale frozen policy.
+ * Segment advances with the same objective stay allowed: the baseline
+ * resets per segment while trial-global budgets survive.
+ */
+export interface ControllerObjective {
+  v: 1;
+  name: string;
+  metricName: string;
+  direction: "lower" | "higher";
+  unit: string;
+  epoch: number;
+  segment: number;
+  frozenAt: string;
+}
+
+export interface FreezeObjectiveResult {
+  objective: ControllerObjective;
+  /** True when this call froze the objective; false when it was already frozen. */
+  froze: boolean;
+}
+
+/**
+ * Freeze the controller objective on first selection. Refreezing the
+ * identical measurement semantics is idempotent; changing `metricName` or
+ * `direction` throws `objective-frozen` (V1 never rotates epochs implicitly).
+ */
+export function freezeControllerObjective(
+  workDir: string,
+  objective: { name: string; metricName: string; direction: "lower" | "higher"; unit: string },
+  meta: { epoch: number; segment: number },
+): FreezeObjectiveResult {
+  if (typeof objective.metricName !== "string" || objective.metricName.length === 0) {
+    throw storeError("validation", "objective.metricName must be a non-empty string");
+  }
+  if (objective.direction !== "lower" && objective.direction !== "higher") {
+    throw storeError("validation", 'objective.direction must be "lower" or "higher"');
+  }
+  if (typeof objective.name !== "string" || typeof objective.unit !== "string") {
+    throw storeError("validation", "objective.name and objective.unit must be strings");
+  }
+  const epoch = requireNonNegativeInt(meta.epoch, "objective.epoch");
+  const segment = requireNonNegativeInt(meta.segment, "objective.segment");
+  const existing = loadControllerObjective(workDir);
+  if (existing) {
+    if (existing.metricName === objective.metricName && existing.direction === objective.direction) {
+      return { objective: existing, froze: false };
+    }
+    throw storeError(
+      "objective-frozen",
+      `controller objective is frozen to ${JSON.stringify(existing.metricName)} (${existing.direction}) ` +
+        `from segment ${existing.segment}; requested ${JSON.stringify(objective.metricName)} (${objective.direction}). ` +
+        "V1 allows one objective per controller session: start a fresh session " +
+        "(clear the controller journal for a new objective) instead of mixing metrics mid-session",
+      controllerObjectivePath(workDir),
+    );
+  }
+  const frozen: ControllerObjective = {
+    v: CONTROLLER_STORE_VERSION,
+    name: objective.name,
+    metricName: objective.metricName,
+    direction: objective.direction,
+    unit: objective.unit,
+    epoch,
+    segment,
+    frozenAt: utcNow(),
+  };
+  const objectivePath = controllerObjectivePath(workDir);
+  const tmpPath = `${objectivePath}.tmp.${process.pid}`;
+  try {
+    fs.mkdirSync(path.dirname(objectivePath), { recursive: true });
+    fs.writeFileSync(tmpPath, `${stableStringify(frozen)}\n`, "utf-8");
+    fs.renameSync(tmpPath, objectivePath);
+  } catch (cause) {
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch {
+      // Inert without the rename.
+    }
+    if (cause instanceof ControllerStoreError) throw cause;
+    throw ioError("cannot freeze controller objective", objectivePath, cause);
+  }
+  return { objective: frozen, froze: true };
+}
+
+/** Load the frozen objective, or `undefined` when nothing was frozen yet. */
+export function loadControllerObjective(workDir: string): ControllerObjective | undefined {
+  const objectivePath = controllerObjectivePath(workDir);
+  let text: string;
+  try {
+    text = fs.readFileSync(objectivePath, "utf-8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
+    throw ioError("cannot read frozen objective", objectivePath, cause);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw storeError("validation", "frozen objective is not valid JSON", objectivePath);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw storeError("validation", "frozen objective must be an object", objectivePath);
+  }
+  return parsed as ControllerObjective;
 }
 
 // --- Bounded payloads ---

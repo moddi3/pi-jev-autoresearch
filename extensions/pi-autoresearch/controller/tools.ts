@@ -69,6 +69,7 @@ import {
   countCancellationsInSegment,
   extractDecisionIdFromAsi,
   findLatestReceiptForDecision,
+  freezeControllerObjective,
   freezePolicy,
   loadControllerPolicy,
   readControllerEvents,
@@ -91,9 +92,12 @@ export const CANCEL_SELECTION_TOOL = "cancel_selection";
 export const CONTROLLER_TOOLS = [SELECT_EXPERIMENT_TOOL, CANCEL_SELECTION_TOOL] as const;
 
 /**
- * V1 controller epoch. A later objective or policy change starts a new epoch
- * and invalidates pending decisions; epoch rotation is ticket 10 scope, so
- * every decision in ticket 08 lands in epoch 0.
+ * V1 controller epoch. V1 constrains one objective per controller session
+ * (review R6 remediation, ticket 04): the first selection freezes the
+ * objective identity and a mid-session objective change is rejected with a
+ * stop action requiring a fresh session — never silently mixed with a stale
+ * frozen policy. Epoch rotation across objectives is deferred; every
+ * decision in V1 lands in epoch 0.
  */
 export const CONTROLLER_EPOCH_V1 = 0;
 
@@ -455,8 +459,16 @@ export interface ExperimentSnapshot {
     timestampMs?: number;
     commit?: string;
     description?: string;
+    /**
+     * Segment the result was logged in. Absent means pre-scoping history
+     * (single-segment session): treated as the active segment.
+     */
+    segment?: number;
+    directionId?: string;
   }>;
   segment: number;
+  /** Controller epoch for the active segment (V1: always 0). */
+  epoch?: number;
   maxExperiments: number | null;
 }
 
@@ -466,6 +478,13 @@ export interface ExperimentSnapshot {
  * identity) stays in code via `buildDecisionState`; Jev only receives the
  * projected facts. Throws `StateConstructionError` on bad input and
  * `StatePayloadTooLargeError` when required material exceeds the cap.
+ *
+ * R6 scoping: results filter to the active segment/objective before
+ * aggregating, while original global run IDs survive filtering so `run-N`
+ * evidence references keep their meaning. Attempt counts are segment-scoped;
+ * the experiment budget (`total`/`used`/`remaining`) is trial-global and
+ * never resets on a segment change. Each projected run retains explicit
+ * segment/epoch/metric identity.
  */
 export function assembleSelectionState(input: {
   snapshot: ExperimentSnapshot;
@@ -476,6 +495,16 @@ export function assembleSelectionState(input: {
   maxStateBytes: number;
 }): ReturnType<typeof buildDecisionState> {
   const statuses = new Set(["keep", "discard", "crash", "checks_failed"]);
+  const activeSegment = input.snapshot.segment;
+  const activeEpoch = input.snapshot.epoch ?? CONTROLLER_EPOCH_V1;
+  const metricName = input.snapshot.objective.metricName;
+  // Trial-global run numbering: position in the FULL upstream list is the
+  // global `run-N` id. Filter to the active segment but keep those ids.
+  const numbered = input.snapshot.results.map((result, index) => ({ result, globalRun: index + 1 }));
+  const trialTotal = numbered.length;
+  const scoped = numbered.filter(({ result }) =>
+    result.segment === undefined ? true : result.segment === activeSegment,
+  );
   return buildDecisionState({
     objective: {
       name: input.snapshot.objective.name.length > 0 ? input.snapshot.objective.name : "autoresearch",
@@ -484,22 +513,26 @@ export function assembleSelectionState(input: {
       unit: input.snapshot.objective.unit,
     },
     revision: input.revision,
-    runs: input.snapshot.results.map((result, index) => ({
-      run: index + 1,
+    runs: scoped.map(({ result, globalRun }) => ({
+      run: globalRun,
       metric: result.metric,
       status: (statuses.has(result.status) ? result.status : "crash") as
         "keep" | "discard" | "crash" | "checks_failed",
       checks: result.status === "checks_failed" ? "fail" as const : "unknown" as const,
       ...(result.timestampMs !== undefined ? { timestampMs: result.timestampMs } : {}),
       ...(result.commit !== undefined ? { commit: result.commit } : {}),
+      ...(result.directionId !== undefined ? { directionId: result.directionId } : {}),
       ...(result.description !== undefined ? { description: result.description } : {}),
+      segment: result.segment ?? activeSegment,
+      epoch: activeEpoch,
+      metricName,
     })),
     evidence: input.evidence.map((entry) => ({ ...entry })),
     candidates: input.candidates,
     llmContext: input.llmContext,
     budget: input.snapshot.maxExperiments === null
-      ? {}
-      : { totalExperiments: input.snapshot.maxExperiments },
+      ? { usedExperiments: trialTotal }
+      : { totalExperiments: input.snapshot.maxExperiments, usedExperiments: trialTotal },
     limits: { maxStateBytes: input.maxStateBytes },
   });
 }
@@ -568,6 +601,68 @@ export function resolveAndFreezePolicy(
     }
   }
   return resolved;
+}
+
+// ---------------------------------------------------------------------------
+// Objective / segment scoping (review R6, ticket 04)
+// ---------------------------------------------------------------------------
+
+/**
+ * Freeze the V1 controller objective on first selection and reject
+ * mid-session objective changes. Measurement semantics (`metricName` +
+ * `direction`) are the identity: a different metric or direction stops with
+ * guidance to start a fresh session instead of silently mixing metrics or
+ * reusing a stale frozen policy. Segment advances with the same objective
+ * stay allowed (the segment baseline resets; trial-global budgets survive).
+ */
+export function freezeAndAssertObjective(
+  workDir: string,
+  objective: { name: string; metricName: string; direction: "lower" | "higher"; unit: string },
+  meta: { epoch: number; segment: number },
+): void {
+  try {
+    freezeControllerObjective(workDir, objective, meta);
+  } catch (cause) {
+    if (cause instanceof ControllerStoreError && cause.code === "objective-frozen") {
+      throw new QuestionEnvelopeError("objective-change", "objective.metricName", "stop", `${cause.message}`);
+    }
+    throw cause;
+  }
+}
+
+/**
+ * Reject a selection in a new segment while the previous segment still holds
+ * pending work. The caller must finish or resume the pending decision first;
+ * a selection never silently continues across segments with mixed history.
+ */
+export function assertSegmentCompatible(
+  lifecycle: ControllerLifecycle,
+  snapshot: Pick<ExperimentSnapshot, "segment" | "epoch">,
+): void {
+  const pending = lifecycle.pendingSnapshot;
+  if (!pending) return;
+  const activeEpoch = snapshot.epoch ?? CONTROLLER_EPOCH_V1;
+  if (pending.epoch !== activeEpoch) {
+    throw new QuestionEnvelopeError(
+      "epoch-change",
+      "revision.epoch",
+      "stop",
+      `pending decision ${pending.decisionId} belongs to epoch ${pending.epoch}, ` +
+        `but the active session is epoch ${activeEpoch}. V1 allows one objective per controller session: ` +
+        "finish the pending work or start a fresh session instead of mixing epochs",
+    );
+  }
+  if (pending.segment !== snapshot.segment) {
+    throw new QuestionEnvelopeError(
+      "segment-change",
+      "revision.segment",
+      "resume-pending",
+      `pending decision ${pending.decisionId} belongs to segment ${pending.segment}, ` +
+        `but the active segment is ${snapshot.segment}. ` +
+        "Finish or resume the pending work first — a selection never silently continues " +
+        "across segments with mixed history",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +810,16 @@ export async function executeSelectExperiment(
   // (ticket 09: the next decision follows the actual logged state).
   freeTerminalDecision(lifecycle);
 
+  // R6 scoping: a selection never silently continues across segments or
+  // epochs with mixed history. Pending work from another segment/epoch must
+  // be finished or resumed first.
+  try {
+    assertSegmentCompatible(lifecycle, snapshot);
+  } catch (cause) {
+    if (cause instanceof QuestionEnvelopeError) return envelopeRejection(SELECT_EXPERIMENT_TOOL, cause);
+    throw cause;
+  }
+
   let validated;
   try {
     validated = validateSelectExperimentInput(raw, {
@@ -726,12 +831,38 @@ export async function executeSelectExperiment(
     throw cause;
   }
 
+  // V1 one-objective constraint: freeze the measurement semantics on first
+  // selection; a mid-session objective change stops (fresh session required)
+  // before the frozen policy or history can be silently mixed.
+  const activeEpoch = snapshot.epoch ?? CONTROLLER_EPOCH_V1;
+  try {
+    freezeAndAssertObjective(
+      workDir,
+      {
+        name: snapshot.objective.name,
+        metricName: snapshot.objective.metricName,
+        direction: snapshot.objective.direction,
+        unit: snapshot.objective.unit,
+      },
+      { epoch: activeEpoch, segment: snapshot.segment },
+    );
+  } catch (cause) {
+    if (cause instanceof QuestionEnvelopeError) return envelopeRejection(SELECT_EXPERIMENT_TOOL, cause);
+    if (cause instanceof ControllerStoreError) {
+      return {
+        ok: false,
+        text: `❌ selection not persisted [persistence-failure]: ${cause.message}\nAction: stop — ${actionHint("stop")}`,
+      };
+    }
+    throw cause;
+  }
+
   let policy: SessionQuestionPolicy;
   try {
     policy = resolveAndFreezePolicy(
       workDir,
       validated.policyDraft,
-      { epoch: CONTROLLER_EPOCH_V1, segment: snapshot.segment },
+      { epoch: activeEpoch, segment: snapshot.segment },
     ).policy;
   } catch (cause) {
     if (cause instanceof QuestionEnvelopeError) return envelopeRejection(SELECT_EXPERIMENT_TOOL, cause);
@@ -817,7 +948,7 @@ export async function executeSelectExperiment(
         sessionId,
         worktree,
         segment: snapshot.segment,
-        epoch: CONTROLLER_EPOCH_V1,
+        epoch: activeEpoch,
         proposalRound: books.round,
         consecutiveUnsuccessfulRounds: books.unsuccessful,
         signal: deps.signal,

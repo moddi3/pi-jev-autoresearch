@@ -50,6 +50,17 @@ export interface StateRunRecord {
   commit?: string;
   directionId?: string;
   description?: string;
+  /**
+   * Explicit segment identity (review R6). When present on any run, every
+   * run must carry the active segment: mixed segments are rejected so a
+   * caller can never silently aggregate across objectives. Absent segments
+   * preserve the pre-scoping contract (single-segment history).
+   */
+  segment?: number;
+  /** Explicit epoch identity for the run's measurement (V1: always 0). */
+  epoch?: number;
+  /** Primary metric name the run was measured under. */
+  metricName?: string;
 }
 
 export interface EvidenceRecord {
@@ -134,6 +145,12 @@ export interface ProjectedRunEntry {
   commit: string;
   directionId: string;
   description: string;
+  /** Active segment identity (null for pre-scoping inputs without one). */
+  segment: number | null;
+  /** Epoch identity (null for pre-scoping inputs without one). */
+  epoch: number | null;
+  /** Primary metric name measured under (null when unknown). */
+  metricName: string | null;
 }
 
 /** Explicit validation / construction failure. `field` is a path, never a value. */
@@ -263,6 +280,9 @@ function checkedRuns(raw: unknown): StateRunRecord[] {
     for (const key of ["commit", "directionId", "description"] as const) {
       if (entry[key] !== undefined) plainString(entry[key], `runs[${index}].${key}`);
     }
+    if (entry.segment !== undefined) intIn(entry.segment, `runs[${index}].segment`, 0, 1_000_000);
+    if (entry.epoch !== undefined) intIn(entry.epoch, `runs[${index}].epoch`, 0, 1_000_000_000);
+    if (entry.metricName !== undefined) nonEmptyString(entry.metricName, `runs[${index}].metricName`);
   }
   return runs as StateRunRecord[];
 }
@@ -331,6 +351,9 @@ function projectRun(run: StateRunRecord, omissions: OmissionRecord[]): Projected
     commit: run.commit ?? "",
     directionId: run.directionId ?? "",
     description: run.description ?? "",
+    segment: run.segment ?? null,
+    epoch: run.epoch ?? null,
+    metricName: run.metricName ?? null,
   };
 }
 
@@ -382,6 +405,25 @@ export function buildDecisionState(input: BuildDecisionStateInput): BuiltDecisio
   };
 
   const runs = checkedRuns(input.runs).slice().sort((a, b) => a.run - b.run);
+  // R6 scoping guard: segment-tagged runs must already be filtered to the
+  // active segment before aggregation. Mixed segments here mean the caller
+  // skipped filtering and would silently mix objectives/metrics.
+  const taggedSegments = new Set(
+    runs.filter((run) => run.segment !== undefined).map((run) => run.segment as number),
+  );
+  if (taggedSegments.size > 1) {
+    fail(
+      "runs",
+      `mixed segments [${[...taggedSegments].sort((a, b) => a - b).join(", ")}] must be filtered to the active segment ${revision.segment} before aggregating`,
+    );
+  }
+  const onlySegment = taggedSegments.size === 1 ? ([...taggedSegments][0] as number) : null;
+  if (onlySegment !== null && onlySegment !== revision.segment) {
+    fail(
+      "runs",
+      `runs carry segment ${onlySegment} but revision.segment is ${revision.segment}: filter to the active segment before aggregating`,
+    );
+  }
   const candidates = checkedCandidates(input.candidates);
   const limits = resolveLimits(input.limits);
   const evidenceById = new Map(evidenceList(input.evidence).map((e) => [e.id, e]));
