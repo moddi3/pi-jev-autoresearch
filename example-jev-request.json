@@ -1,0 +1,92 @@
+{
+  "model": "jev-1.13.0",
+  "state": {
+    "fixture_notice": "Synthetic illustration only. These numbers are fabricated, not results from a real repository.",
+    "objective": {
+      "metric": "transform_ms",
+      "direction": "lower",
+      "unit": "ms"
+    },
+    "constraints": {
+      "required_output": "All transformation outputs must remain unchanged.",
+      "allowed_files": [
+        "src/transform.ts"
+      ],
+      "benchmark_and_tests_read_only": true
+    },
+    "observed": {
+      "baseline_ms": 100,
+      "current_retained_ms": 90,
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "profile",
+          "text": "In the synthetic profile, configuration parsing is repeated for each record and is the dominant remaining phase."
+        },
+        {
+          "id": "e2",
+          "kind": "source",
+          "text": "The configuration input is unchanged during one transformation invocation."
+        },
+        {
+          "id": "e3",
+          "kind": "previous_attempt",
+          "text": "Changing the output buffer allocation without reducing parsing did not produce a repeatable gain."
+        }
+      ],
+      "derived_by_code": {
+        "retained_gain_fraction": 0.1,
+        "current_correctness_checks_passed": true
+      }
+    },
+    "candidates": [
+      {
+        "id": "c1",
+        "direction": "avoid-repeated-parsing",
+        "action": "Parse configuration once before the record loop and pass the parsed object to each record conversion.",
+        "hypothesis": "Removing repeated parsing addresses the observed dominant phase.",
+        "evidence_refs": [
+          "e1",
+          "e2"
+        ],
+        "assumptions": [
+          "The parsed configuration is not mutated by individual conversions."
+        ]
+      },
+      {
+        "id": "c2",
+        "direction": "change-output-allocation",
+        "action": "Use a preallocated output array instead of appending to the current output array.",
+        "hypothesis": "Output allocation might contribute to remaining runtime.",
+        "evidence_refs": [
+          "e3"
+        ],
+        "assumptions": [
+          "The earlier negative allocation experiment may not cover this exact implementation."
+        ]
+      },
+      {
+        "id": "c3",
+        "direction": "confirm-measurement",
+        "action": "Remeasure the unchanged retained implementation with the existing fixed benchmark.",
+        "hypothesis": "Additional repeated observations may be needed before another code change.",
+        "evidence_refs": [],
+        "assumptions": [
+          "The current measurement may not be stable enough."
+        ]
+      }
+    ]
+  },
+  "questions": {
+    "next_experiment": {
+      "type": "choice",
+      "instructions": "Which candidate has the most directly supported hypothesis for addressing the current measured bottleneck? Use the observed evidence and candidate descriptions. Assumptions are not observations. Select request_new_candidates when none of the proposed experiments has adequate support. Select the remeasurement candidate only when the evidence is insufficient to justify an edit.",
+      "criteria": {
+        "c1": "Try parsing the unchanged configuration once per transformation invocation.",
+        "c2": "Try a different output array allocation strategy.",
+        "c3": "Remeasure the retained code without editing it.",
+        "request_new_candidates": "None of these is adequately supported; request a better proposal set."
+      }
+    }
+  }
+}
