@@ -12,6 +12,7 @@ Autonomous experiment loop: try ideas, keep what works, discard what doesn't, ne
 - **`init_experiment`** — configure session (name, metric, unit, direction). Call again to re-initialize with a new baseline when the optimization target changes.
 - **`run_experiment`** — runs command, times it, captures output.
 - **`log_experiment`** — records result. `keep` auto-commits. `discard`/`crash`/`checks_failed` auto-reverts code changes (autoresearch files preserved). Always include secondary `metrics` dict. Dashboard: ctrl+shift+t.
+- **`select_experiment` / `cancel_selection`** — Jev mode only (requires `"controller": { "mode": "jev" }` in `.auto/config.json`). Propose 2–4 concrete candidates for Jev selection; cancel an infeasible pending selection with new evidence. Inactive otherwise — see "Jev-directed selection (opt-in)" below.
 
 ## Session files
 
@@ -133,6 +134,45 @@ set -euo pipefail
 pnpm test --run --reporter=dot 2>&1 | tail -50
 pnpm typecheck 2>&1 | grep -i error || true
 ```
+
+## Jev-directed selection (opt-in)
+
+With no `controller` section in `.auto/config.json`, or `"controller": { "mode": "off" }`, ignore this section entirely — the normal flow above is unchanged, no API key is needed, and no controller state is created.
+
+### Enabling
+
+1. Add one section to `.auto/config.json` (every other controller field keeps its default):
+
+```json
+{
+  "controller": { "mode": "jev" }
+}
+```
+
+2. Export `TYPESAFE_API_KEY` in the process environment (or your supported secret mechanism). Never put the key in config, prompts, logs, screenshots, or Git.
+3. An invalid enabled config fails loudly — fix the `controller` section. It never silently runs without Jev direction.
+
+### Question-plan drafting
+
+On the first `select_experiment` call, include a `policyDraft`: a short domain-specific selection clause plus optional atomic diagnostic questions. It freezes for the segment (stored in `.auto/controller/policy.json`); later calls omit it or reproduce the identical clause. A mid-segment rewrite is rejected. A changed objective or policy starts a new controller epoch, which invalidates pending decisions but preserves history.
+
+### Protocol
+
+Once a baseline exists, propose → select → implement is the only path to target edits:
+
+1. **Baseline is exempt.** Set up the objective, benchmark, and baseline without calling `select_experiment`.
+2. **Propose** 2–4 diverse concrete candidates in one `select_experiment` call. Reference only known evidence ids (`run-<n>`, `benchmark-script`, `experiment-prompt`); unknown refs are rejected.
+3. **Implement ONLY** the returned selected experiment, within its approved `filesToChange` and its frozen outline. Never implement all candidates, never substitute a preferred alternative.
+4. **Run, then log** for that same pending decision. Post-baseline `run_experiment` without a usable pending decision is rejected; `log_experiment` completes the association. Keep/discard semantics and correctness checks are unchanged — Jev never overrides a failing test.
+5. **Infeasible selection?** Call `cancel_selection` with the pending decision id, a concrete reason, and new evidence refs. Cancellations are capped per segment — repeated cancellations pause the controller instead of asking Jev again.
+
+### Recovery
+
+- **Interrupted session** (crash, compaction, restart, branch switch): state rebuilds from `.auto/controller/events.jsonl` plus the upstream `.auto/log.jsonl` links (`recover()` / `pendingDecisionRecord()`). Resume the pending decision — implement, run, log for that decision id. Never propose a fresh set over a pending decision.
+- **Compaction** points at the pending selection and compacts controller state; the full journal is never injected. The journal on disk stays the source of truth.
+- **Inspect why a candidate won:** read that decision's journal record (exact selector input hash, probabilities, confidence, model versions). Never trust a retold rationale.
+- **Pause** (provider failure, cap exceeded) is visible and explicit — resume before selecting. Operator resume from pause invalidates stale pending work.
+- **Off** preserves history (the journal stays on disk) but cancels active in-memory work. **Clear** deletes the session log *and* `.auto/controller/` under the same semantics. **Re-initialization** (`init_experiment`) starts a new segment; it never resets an evaluation budget — the trial supervisor's global cost/time/experiment limits stand.
 
 ## Loop Rules
 

@@ -16,6 +16,19 @@ import {
   type ReconstructedRun,
 } from "./jsonl.ts";
 import { sessionFilePath } from "./paths.ts";
+import {
+  controllerDir,
+  controllerEventsPath,
+  controllerPendingPath,
+  controllerPayloadsDir,
+  controllerPolicyPath,
+  controllerQuarantineDir,
+  loadControllerPolicy,
+  loadPendingSnapshot,
+  readControllerEvents,
+  type ControllerEvent,
+  type PendingSnapshot,
+} from "./controller/store.ts";
 
 const RECENT_RUN_LIMIT = 50;
 
@@ -50,6 +63,7 @@ export function buildAutoresearchCompactionSummary(paths: AutoresearchSummaryPat
     rulesSection(paths.workDir, paths.mdPath),
     ideasSection(paths.workDir, paths.ideasPath),
     recentRunsSection(state, paths.workDir, paths.jsonlPath),
+    buildControllerCompactionSection(paths.workDir),
     nextStepSection(),
   ];
   return sections.filter(Boolean).join("\n\n");
@@ -234,6 +248,174 @@ function formatAsiField(asi: Record<string, unknown>, key: string, label: string
   const value = asi[key];
   if (typeof value !== "string" || value.trim() === "") return "";
   return `${label}: ${value.trim()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Jev controller (ticket 10, AGENT_HANDOFF.md §5 + §9)
+//
+// When Jev control was never enabled there are no controller artifacts and
+// this contributes nothing, keeping the summary byte-identical to baseline.
+// Otherwise the section points at the pending selection and names the resume
+// action. It is deliberately compact: decision/selector identifiers, the
+// selected experiment's title and approved files, journal counts, and file
+// pointers — never the full journal, probabilities, or selector input. The
+// journal on disk stays the source of truth; inspect individual records only
+// when the resume pointer is insufficient.
+// ---------------------------------------------------------------------------
+
+const CONTROLLER_TITLE_CHARS = 120;
+const CONTROLLER_FILES_SHOWN = 10;
+
+/**
+ * Compact controller state for the compaction summary. Returns `""` when no
+ * controller artifacts exist (off mode stays byte-identical). Never throws:
+ * unreadable artifacts produce an attention note instead of breaking resume.
+ */
+export function buildControllerCompactionSection(workDir: string): string {
+  if (!fs.existsSync(controllerDir(workDir))) return "";
+
+  let events: ControllerEvent[] = [];
+  let eventsNote = "";
+  try {
+    events = readControllerEvents(workDir).events;
+  } catch (cause) {
+    eventsNote = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  let snapshot: PendingSnapshot | undefined;
+  let snapshotNote = "";
+  try {
+    snapshot = loadPendingSnapshot(workDir);
+  } catch (cause) {
+    snapshotNote = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  let policyLine = "";
+  try {
+    const policy = loadControllerPolicy(workDir);
+    if (policy) {
+      policyLine = `Question plan: policy.json (v${policy.version}, hash ${policy.hash.slice(0, 12)}…, epoch ${policy.epoch}, segment ${policy.segment}) — frozen, do not rewrite mid-segment.`;
+    }
+  } catch {
+    // An unreadable policy is reported through the attention note below when
+    // it matters; its absence never blocks resume of the pending decision.
+  }
+
+  const decisions = events.filter((event) => event.kind === "decision");
+  const outcomes = events.filter((event) => event.kind === "outcome");
+  if (events.length === 0 && !snapshot && !eventsNote && !snapshotNote) return "";
+
+  const lines = ["## Jev Controller", ""];
+  if (eventsNote) {
+    lines.push(
+      `Controller journal needs attention: ${eventsNote}.`,
+      "Stop and report — do not invent a selection to work around it.",
+      "",
+    );
+  }
+  if (snapshotNote) {
+    lines.push(
+      `Pending snapshot unreadable (${snapshotNote}); recovery discards it.`,
+      "The journal below remains the source of truth.",
+      "",
+    );
+  }
+
+  const pending = pendingPointer(events, snapshot);
+  if (pending) {
+    lines.push(
+      `Pending decision: ${pending.decisionId} (${pending.state}) — selected ${pending.selectedId}${pending.title}.`,
+      `Approved files: ${pending.scopeLine}. Implement ONLY this experiment inside its scope.`,
+      `Resume: implement the selected experiment, then run_experiment + log_experiment for decision ${pending.decisionId}.`,
+      "This takes precedence over picking a new hypothesis. Do NOT call select_experiment again over a pending",
+      "decision; cancel_selection requires the pending decision id, a concrete reason, and new evidence refs.",
+      "",
+    );
+  } else if (!eventsNote) {
+    lines.push(
+      "No pending decision (needs_selection). Start the next round with select_experiment (2-4 candidates).",
+      "",
+    );
+  }
+
+  lines.push(
+    `Journal: ${decisions.length} decision(s), ${outcomes.length} outcome(s) in ${readablePath(workDir, controllerEventsPath(workDir))} — not injected here.`,
+  );
+  if (policyLine) lines.push(policyLine);
+  lines.push(
+    `Pending snapshot: ${readablePath(workDir, controllerPendingPath(workDir))}. ` +
+      `Why a candidate was selected: read that decision's record in the journal (selector input hash, probabilities, confidence).`,
+  );
+  return lines.join("\n");
+}
+
+interface PendingPointer {
+  decisionId: string;
+  state: string;
+  selectedId: string;
+  title: string;
+  scopeLine: string;
+}
+
+/**
+ * Resolve the live pending decision to a compact pointer. A snapshot naming
+ * a decision the journal closed (outcome/cancel) or never recorded carries no
+ * pending work and resolves to `undefined`.
+ */
+function pendingPointer(events: ControllerEvent[], snapshot: PendingSnapshot | undefined): PendingPointer | undefined {
+  if (!snapshot) return undefined;
+  const decision = events.find(
+    (event) => event.kind === "decision" && event.record.decisionId === snapshot.decisionId,
+  );
+  if (!decision || decision.kind !== "decision") return undefined;
+  const closed = events.some(
+    (event) =>
+      (event.kind === "outcome" && event.record.decisionId === snapshot.decisionId) ||
+      (event.kind === "decision_cancelled" && event.decisionId === snapshot.decisionId) ||
+      (event.kind === "decision_discarded" && event.decisionId === snapshot.decisionId) ||
+      (event.kind === "new_proposals" && event.decisionId === snapshot.decisionId),
+  );
+  if (closed) return undefined;
+  const record = decision.record;
+  const selected = record.acceptedCandidates.find(
+    (candidate) => candidate.id === record.selection.selectedId,
+  );
+  const title = selected ? ` ("${truncateOneLine(selected.title, CONTROLLER_TITLE_CHARS)}")` : "";
+  const files = selected ? selected.filesToChange : [];
+  const scopeLine = files.length === 0
+    ? "(remeasure — no target files)"
+    : files.slice(0, CONTROLLER_FILES_SHOWN).join(", ") +
+      (files.length > CONTROLLER_FILES_SHOWN ? ` (+${files.length - CONTROLLER_FILES_SHOWN} more)` : "");
+  return {
+    decisionId: snapshot.decisionId,
+    state: snapshot.state,
+    selectedId: record.selection.selectedId,
+    title,
+    scopeLine,
+  };
+}
+
+function truncateOneLine(text: string, cap: number): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length <= cap ? oneLine : `${oneLine.slice(0, cap)}…`;
+}
+
+/**
+ * Controller artifacts that `/autoresearch clear` removes alongside the
+ * upstream session log. A single revert-protected directory covers the
+ * journal, the pending snapshot, the frozen policy, payloads, and quarantine;
+ * listed explicitly so the clear path cannot strand controller state while
+ * deleting history.
+ */
+export function controllerClearTargets(workDir: string): string[] {
+  return [
+    controllerDir(workDir),
+    controllerEventsPath(workDir),
+    controllerPendingPath(workDir),
+    controllerPolicyPath(workDir),
+    controllerPayloadsDir(workDir),
+    controllerQuarantineDir(workDir),
+  ];
 }
 
 // ---------------------------------------------------------------------------
